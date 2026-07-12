@@ -42,6 +42,10 @@ from pocket_tts_mlx.utils.weight_conversion import (
 
 logger = logging.getLogger(__name__)
 
+
+class GenerationDidNotReachEOS(RuntimeError):
+    """Raised when buffered generation reaches its safety limit without EOS."""
+
 VOICE_CLONING_UNSUPPORTED = (
     f"We could not download the weights for the model with voice cloning, "
     f"but you're trying to use voice cloning. "
@@ -327,22 +331,41 @@ class TTSModel(nn.Module):
         language: str = "english",
         temperature: float | None = None,
         seed: int | None = None,
+        max_retries: int = 1,
     ) -> mx.array:
-        """Generate full audio array from text."""
+        """Generate full audio, retrying attempts that never reach EOS."""
+        if max_retries < 0:
+            raise ValueError("max_retries must be non-negative")
+
         audio_chunks = []
-        for chunk in self.generate_audio_stream(
-            model_state=model_state,
-            text_to_generate=text_to_generate,
-            frames_after_eos=frames_after_eos,
-            copy_state=copy_state,
-            max_tokens=max_tokens,
-            warmup_frames=warmup_frames,
-            dictionary=dictionary,
-            language=language,
-            temperature=temperature,
-            seed=seed,
-        ):
-            audio_chunks.append(chunk)
+        for attempt in range(max_retries + 1):
+            audio_chunks.clear()
+            attempt_seed = None if seed is None else seed + attempt
+            try:
+                for chunk in self.generate_audio_stream(
+                    model_state=model_state,
+                    text_to_generate=text_to_generate,
+                    frames_after_eos=frames_after_eos,
+                    copy_state=copy_state,
+                    max_tokens=max_tokens,
+                    warmup_frames=warmup_frames,
+                    dictionary=dictionary,
+                    language=language,
+                    temperature=temperature,
+                    seed=attempt_seed,
+                    _raise_on_missing_eos=True,
+                ):
+                    audio_chunks.append(chunk)
+                break
+            except GenerationDidNotReachEOS:
+                if attempt >= max_retries:
+                    raise
+                logger.warning(
+                    "Generation did not reach EOS; retrying attempt %d/%d",
+                    attempt + 2,
+                    max_retries + 1,
+                )
+
         audio = mx.concatenate(audio_chunks, axis=0)
         audio = self._postprocess_audio_start(audio, trim_start_ms=trim_start_ms, fade_in_ms=fade_in_ms)
         # Materialize the array so external np.array timing reflects generation cost.
@@ -361,6 +384,7 @@ class TTSModel(nn.Module):
         language: str = "english",
         temperature: float | None = None,
         seed: int | None = None,
+        _raise_on_missing_eos: bool = False,
     ) -> Generator[mx.array, None, None]:
         """Yield audio chunks as they are generated."""
         if temperature is not None and temperature < 0:
@@ -392,6 +416,7 @@ class TTSModel(nn.Module):
                 warmup_frames=warmup_frames,
                 temperature=temperature,
                 sampling_key=chunk_key,
+                raise_on_missing_eos=_raise_on_missing_eos,
             )
 
     def _generate_audio_stream_short_text(
@@ -403,6 +428,7 @@ class TTSModel(nn.Module):
         warmup_frames: int,
         temperature: float | None = None,
         sampling_key: Optional[mx.array] = None,
+        raise_on_missing_eos: bool = False,
     ):
         """Generate audio for a short prompt with streaming FlowLM."""
         if copy_state:
@@ -488,6 +514,14 @@ class TTSModel(nn.Module):
             generation_time,
             real_time_factor,
         )
+        if eos_step is None:
+            message = (
+                f"Generation reached its {max_gen_len}-frame safety limit without EOS "
+                f"for text: {text_to_generate[:80]!r}"
+            )
+            logger.warning(message)
+            if raise_on_missing_eos:
+                raise GenerationDidNotReachEOS(message)
 
     def _estimate_max_gen_len(self, token_count: int) -> int:
         """Estimate max generation frames from token count."""

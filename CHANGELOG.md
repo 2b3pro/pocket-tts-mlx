@@ -9,6 +9,7 @@
 - Added CLI `--dictionary` support and automatic loading from `~/.config/pocket-tts/dictionary.{yaml,yml,json}`.
 - Added per-generation `temperature` and deterministic `seed` controls to the Python API and CLI.
 - Use explicit per-generation MLX random keys so seeded requests are reproducible without mutating global RNG state.
+- Detect buffered generations that exhaust their safety limit without EOS and retry with a fresh random stream.
 
 ### Fixed
 

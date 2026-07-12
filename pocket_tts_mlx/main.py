@@ -64,6 +64,12 @@ def main() -> int:
     )
     parser.add_argument("--seed", type=int, default=None, help="Deterministic generation seed")
     parser.add_argument(
+        "--max-retries",
+        type=int,
+        default=1,
+        help="Retries when buffered generation reaches its safety limit without EOS",
+    )
+    parser.add_argument(
         "--trim-start-ms",
         type=int,
         default=0,
@@ -118,6 +124,7 @@ def main() -> int:
             dictionary=dictionary,
             temperature=args.temperature,
             seed=args.seed,
+            max_retries=args.max_retries,
         )
 
         out_path = Path(args.output)
