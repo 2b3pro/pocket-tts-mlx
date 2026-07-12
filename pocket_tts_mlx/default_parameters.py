@@ -1,7 +1,7 @@
 """Default runtime parameters for MLX TTS generation."""
 
 DEFAULT_AUDIO_PROMPT = "alba"
-DEFAULT_VARIANT = "b6369a24"
+DEFAULT_VARIANT = "english_2026-04"
 DEFAULT_TEMPERATURE = 0.7
 DEFAULT_LSD_DECODE_STEPS = 1
 DEFAULT_NOISE_CLAMP = None

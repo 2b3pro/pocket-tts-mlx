@@ -4,6 +4,7 @@ import unittest
 
 import mlx.core as mx
 
+from pocket_tts_mlx.default_parameters import DEFAULT_VARIANT
 from pocket_tts_mlx.models.tts_model import prepare_text_prompt
 from pocket_tts_mlx.modules.resample import ConvDownsample1d, ConvTrUpsample1d
 from pocket_tts_mlx.utils.config import load_config
@@ -14,6 +15,9 @@ CONFIG_DIR = Path(__file__).parents[1] / "pocket_tts_mlx" / "config"
 
 
 class V2ConfigTests(unittest.TestCase):
+    def test_v2_english_is_the_default_variant(self):
+        self.assertEqual(DEFAULT_VARIANT, "english_2026-04")
+
     def test_v2_english_dimensions_and_voice_bos(self):
         config = load_config(CONFIG_DIR / "english_2026-04.yaml")
 

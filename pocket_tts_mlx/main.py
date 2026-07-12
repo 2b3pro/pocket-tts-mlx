@@ -58,7 +58,7 @@ def main() -> int:
     parser.add_argument(
         "--model",
         default=DEFAULT_VARIANT,
-        help="Bundled model variant or local YAML config (default: b6369a24)",
+        help=f"Bundled model variant or local YAML config (default: {DEFAULT_VARIANT})",
     )
     parser.add_argument("--output", "-o", default="output.wav", help="Output WAV file")
     parser.add_argument(

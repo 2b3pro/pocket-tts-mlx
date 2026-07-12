@@ -11,7 +11,11 @@
 - Use explicit per-generation MLX random keys so seeded requests are reproducible without mutating global RNG state.
 - Detect buffered generations that exhaust their safety limit without EOS and retry with a fresh random stream.
 - Added opt-in batched Mimi decoding through the Python `decode_batch_size` argument and CLI `--decode-batch-size`. The default remains `1` for bit-identical frame-at-a-time output and minimum streaming latency; `4` is the recommended starting point for buffered/offline generation.
-- Added opt-in compatibility with upstream's April 2026 English checkpoint via `TTSModel.load_model("english_2026-04")` and CLI `--model english_2026-04`, including v2 Mimi dimensions, learned voice BOS conditioning, and serialized voice-state loading. The legacy checkpoint remains the default pending evaluation.
+- Added compatibility with upstream's April 2026 English checkpoint, including v2 Mimi dimensions, learned voice BOS conditioning, and serialized voice-state loading.
+
+### Changed
+
+- Promoted `english_2026-04` to the default model after reliability, reproducibility, pronunciation, and legacy-regression evaluation. The previous `b6369a24` checkpoint remains available through `TTSModel.load_model("b6369a24")` and CLI `--model b6369a24` for comparison or rollback.
 
 ### Fixed
 
@@ -27,7 +31,7 @@
 - Replaced manual trigonometric RoPE construction with a fused `mx.fast.rope` call shared by query and key tensors.
 - Evaluate FlowLM EOS output and Mimi audio together, reducing streaming generation from two GPU synchronizations to one per yielded frame.
 - Allow offline callers to amortize Mimi decoder dispatch and synchronization overhead across completed latent frames. In the local fixed-seed benchmark, batch size `4` reduced median generation time from 0.776 s to 0.625 s (about 24%) while preserving output length; batched decoder arithmetic can produce small floating-point waveform differences.
-- Validated the April 2026 English checkpoint on the original Lincoln failure case: generation completed without a garbled tail, remained exactly reproducible for a fixed seed, produced no non-finite samples, and ran about 13% faster than the legacy checkpoint in the local comparison. The checkpoint remains opt-in until broader listening evaluation is complete.
+- Validated the April 2026 English checkpoint on the original Lincoln failure case: generation completed without a garbled tail, remained exactly reproducible for a fixed seed, produced no non-finite samples, and ran about 13% faster than the legacy checkpoint in the local comparison.
 
 ### Tests
 
