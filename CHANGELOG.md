@@ -2,14 +2,30 @@
 
 ## Unreleased
 
+### Added
+
+- Ported upstream text normalization for decimals and currency so structural punctuation is converted to spoken text before tokenization.
+- Added `UserDictionary` pronunciation overrides with JSON/YAML loading, language-specific and common sections, literal or regex matching, and dictionary composition.
+- Added CLI `--dictionary` support and automatic loading from `~/.config/pocket-tts/dictionary.{yaml,yml,json}`.
+- Added per-generation `temperature` and deterministic `seed` controls to the Python API and CLI.
+- Use explicit per-generation MLX random keys so seeded requests are reproducible without mutating global RNG state.
+
 ### Fixed
 
 - Split oversized single sentences at commas, semicolons, and colons before generation, keeping each natural clause group within `max_tokens` when possible. Previously, a sentence without terminal punctuation before the end could bypass the chunk limit and produce skipped words, garbled speech, or an excessively long audio tail.
 - Warn when a chunk still exceeds `max_tokens` because it contains no usable sentence or clause boundary.
+- Aligned the CLI `--max-tokens` default with the safer 50-token library default instead of 500.
+
+### Improved
+
+- Vectorized Mimi ring-buffer KV-cache writes with `mx.put_along_axis`, removing per-frame Python loops, scalar device reads, and repeated slice updates from the decoder hot path.
+- Replaced manual attention matmul/softmax sequences with `mx.fast.scaled_dot_product_attention` for FlowLM and Mimi.
+- Replaced manual trigonometric RoPE construction with a fused `mx.fast.rope` call shared by query and key tensors.
+- Evaluate FlowLM EOS output and Mimi audio together, reducing streaming generation from two GPU synchronizations to one per yielded frame.
 
 ### Tests
 
-- Added regression coverage for oversized clause splitting and for preserving short sentences containing commas.
+- Added regression coverage for oversized clause splitting, text normalization, dictionary loading and composition, and generation-path pronunciation overrides.
 
 ## v0.2.1 - 2026-02-11
 

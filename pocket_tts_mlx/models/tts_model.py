@@ -28,6 +28,7 @@ from pocket_tts_mlx.modules.dummy_quantizer import DummyQuantizer
 from pocket_tts_mlx.modules.mimi_transformer import ProjectedTransformer
 from pocket_tts_mlx.modules.seanet import SEANetDecoder, SEANetEncoder
 from pocket_tts_mlx.modules.stateful_module import increment_steps, init_states
+from pocket_tts_mlx.text_normalization import UserDictionary, normalize_text
 from pocket_tts_mlx.utils.config import Config, load_config
 from pocket_tts_mlx.utils.utils import display_execution_time, download_if_necessary, size_of_dict
 from pocket_tts_mlx.utils.weight_conversion import (
@@ -226,6 +227,8 @@ class TTSModel(nn.Module):
         text_tokens: Optional[mx.array] = None,
         backbone_input_latents: Optional[mx.array] = None,
         audio_conditioning: Optional[mx.array] = None,
+        temperature: float | None = None,
+        sampling_key: Optional[mx.array] = None,
     ) -> tuple[mx.array, mx.array]:
         """Run FlowLM and advance streaming offsets."""
         if text_tokens is None:
@@ -240,6 +243,8 @@ class TTSModel(nn.Module):
             backbone_input_latents=backbone_input_latents,
             model_state=model_state,
             audio_conditioning=audio_conditioning,
+            temperature=temperature,
+            sampling_key=sampling_key,
         )
         increment_by = (
             text_tokens.shape[1] + backbone_input_latents.shape[1] + audio_conditioning.shape[1]
@@ -253,6 +258,8 @@ class TTSModel(nn.Module):
         text_tokens: mx.array,
         backbone_input_latents: mx.array,
         audio_conditioning: mx.array,
+        temperature: float | None = None,
+        sampling_key: Optional[mx.array] = None,
     ) -> tuple[mx.array, mx.array]:
         """Compute next latent and EOS using FlowLM."""
         text_embeddings = self.flow_lm.conditioner(TokenizedText(text_tokens))
@@ -262,9 +269,10 @@ class TTSModel(nn.Module):
             text_embeddings,
             model_state=model_state,
             lsd_decode_steps=self.lsd_decode_steps,
-            temp=self.temp,
+            temp=self.temp if temperature is None else temperature,
             noise_clamp=self.noise_clamp,
             eos_threshold=self.eos_threshold,
+            sampling_key=sampling_key,
         )
         return output_embeddings[:, None, :], is_eos
 
@@ -315,6 +323,10 @@ class TTSModel(nn.Module):
         trim_start_ms: int = 0,
         fade_in_ms: int = 0,
         warmup_frames: int = _MIMI_WARMUP_FRAMES,
+        dictionary: UserDictionary | None = None,
+        language: str = "english",
+        temperature: float | None = None,
+        seed: int | None = None,
     ) -> mx.array:
         """Generate full audio array from text."""
         audio_chunks = []
@@ -325,6 +337,10 @@ class TTSModel(nn.Module):
             copy_state=copy_state,
             max_tokens=max_tokens,
             warmup_frames=warmup_frames,
+            dictionary=dictionary,
+            language=language,
+            temperature=temperature,
+            seed=seed,
         ):
             audio_chunks.append(chunk)
         audio = mx.concatenate(audio_chunks, axis=0)
@@ -341,12 +357,28 @@ class TTSModel(nn.Module):
         frames_after_eos: Optional[int] = None,
         copy_state: bool = True,
         warmup_frames: int = _MIMI_WARMUP_FRAMES,
+        dictionary: UserDictionary | None = None,
+        language: str = "english",
+        temperature: float | None = None,
+        seed: int | None = None,
     ) -> Generator[mx.array, None, None]:
         """Yield audio chunks as they are generated."""
+        if temperature is not None and temperature < 0:
+            raise ValueError("temperature must be non-negative")
+
+        sampling_key = mx.random.key(seed) if seed is not None else None
         chunks = split_into_best_sentences(
-            self.flow_lm.conditioner.tokenizer, text_to_generate, max_tokens
+            self.flow_lm.conditioner.tokenizer,
+            text_to_generate,
+            max_tokens,
+            dictionary=dictionary,
+            language=language,
         )
         for chunk in chunks:
+            chunk_key = None
+            if sampling_key is not None:
+                split_keys = mx.random.split(sampling_key, 2)
+                sampling_key, chunk_key = split_keys[0], split_keys[1]
             text_to_generate, frames_after_eos_guess = prepare_text_prompt(chunk)
             frames_after_eos_guess += 2
             effective_frames = (
@@ -358,6 +390,8 @@ class TTSModel(nn.Module):
                 frames_after_eos=effective_frames,
                 copy_state=copy_state,
                 warmup_frames=warmup_frames,
+                temperature=temperature,
+                sampling_key=chunk_key,
             )
 
     def _generate_audio_stream_short_text(
@@ -367,6 +401,8 @@ class TTSModel(nn.Module):
         frames_after_eos: int,
         copy_state: bool,
         warmup_frames: int,
+        temperature: float | None = None,
+        sampling_key: Optional[mx.array] = None,
     ):
         """Generate audio for a short prompt with streaming FlowLM."""
         if copy_state:
@@ -385,9 +421,20 @@ class TTSModel(nn.Module):
 
         t_generating = time.monotonic()
 
+        def next_sampling_key() -> Optional[mx.array]:
+            nonlocal sampling_key
+            if sampling_key is None:
+                return None
+            split_keys = mx.random.split(sampling_key, 2)
+            sampling_key = split_keys[0]
+            return split_keys[1]
+
         with display_execution_time("Prompting text"):
             self._run_flow_lm_and_increment_step(
-                model_state=model_state, text_tokens=prepared.tokens
+                model_state=model_state,
+                text_tokens=prepared.tokens,
+                temperature=temperature,
+                sampling_key=next_sampling_key(),
             )
 
         backbone_input = mx.full(
@@ -402,14 +449,11 @@ class TTSModel(nn.Module):
         for generation_step in range(max_gen_len):
             with display_execution_time("Generating latent", print_output=False) as timer:
                 next_latent, is_eos = self._run_flow_lm_and_increment_step(
-                    model_state=model_state, backbone_input_latents=backbone_input
+                    model_state=model_state,
+                    backbone_input_latents=backbone_input,
+                    temperature=temperature,
+                    sampling_key=next_sampling_key(),
                 )
-
-                is_eos_scalar = bool(is_eos.item())
-                if is_eos_scalar and eos_step is None:
-                    eos_step = generation_step
-                if eos_step is not None and generation_step >= eos_step + frames_after_eos:
-                    break
 
                 # Decode latent frame into audio via Mimi.
                 mimi_decoding_input = next_latent * self.flow_lm.emb_std + self.flow_lm.emb_mean
@@ -418,8 +462,16 @@ class TTSModel(nn.Module):
                 audio_frame = self.mimi.decode_from_latent(quantized, mimi_state)
                 increment_steps(self.mimi, mimi_state, increment=16)
                 audio_chunk = audio_frame[0, 0]
-                # Force eager execution per chunk for honest timing and smoother streaming.
-                mx.eval(audio_chunk)
+
+                # Materialize FlowLM EOS and Mimi audio together to avoid two
+                # GPU synchronizations for every yielded frame.
+                mx.eval(is_eos, audio_chunk)
+                is_eos_scalar = bool(is_eos.item())
+                if is_eos_scalar and eos_step is None:
+                    eos_step = generation_step
+                if eos_step is not None and generation_step >= eos_step + frames_after_eos:
+                    break
+
                 total_generated_samples += audio_chunk.shape[-1]
                 yield audio_chunk
 
@@ -547,8 +599,17 @@ def _segments_from_boundaries(
     return segments
 
 
-def split_into_best_sentences(tokenizer, text_to_generate: str, max_tokens: int) -> list[str]:
+def split_into_best_sentences(
+    tokenizer,
+    text_to_generate: str,
+    max_tokens: int,
+    dictionary: UserDictionary | None = None,
+    language: str = "english",
+) -> list[str]:
     text_to_generate, _ = prepare_text_prompt(text_to_generate)
+    text_to_generate = normalize_text(
+        text_to_generate, language=language, dictionary=dictionary
+    )
     text_to_generate = text_to_generate.strip()
     tokens = tokenizer(text_to_generate)
     list_of_tokens = tokens.tokens[0].tolist()

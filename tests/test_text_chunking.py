@@ -2,6 +2,7 @@ from dataclasses import dataclass
 import unittest
 
 from pocket_tts_mlx.models.tts_model import split_into_best_sentences
+from pocket_tts_mlx.text_normalization import UserDictionary
 
 
 @dataclass
@@ -59,6 +60,28 @@ class TextChunkingTests(unittest.TestCase):
         text = "Short, complete."
 
         self.assertEqual(split_into_best_sentences(tokenizer, text, max_tokens=50), [text])
+
+    def test_normalizes_decimals_before_sentence_splitting(self):
+        tokenizer = _CharacterTokenizer()
+
+        chunks = split_into_best_sentences(tokenizer, "Pi is 3.14.", max_tokens=50)
+
+        self.assertEqual(chunks, ["Pi is 3 point 14."])
+
+    def test_pronunciation_dictionary_is_applied_before_tokenization(self):
+        tokenizer = _CharacterTokenizer()
+        dictionary = UserDictionary.from_dict(
+            {"english": [{"match": "MLX", "replace": "em el ex"}]}
+        )
+
+        chunks = split_into_best_sentences(
+            tokenizer,
+            "MLX is fast.",
+            max_tokens=50,
+            dictionary=dictionary,
+        )
+
+        self.assertEqual(chunks, ["em el ex is fast."])
 
 
 if __name__ == "__main__":
