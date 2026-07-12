@@ -10,7 +10,7 @@
 - Added per-generation `temperature` and deterministic `seed` controls to the Python API and CLI.
 - Use explicit per-generation MLX random keys so seeded requests are reproducible without mutating global RNG state.
 - Detect buffered generations that exhaust their safety limit without EOS and retry with a fresh random stream.
-- Added opt-in batched Mimi decoding through `decode_batch_size` and CLI `--decode-batch-size`; the default remains frame-at-a-time for exact output and low streaming latency.
+- Added opt-in batched Mimi decoding through the Python `decode_batch_size` argument and CLI `--decode-batch-size`. The default remains `1` for bit-identical frame-at-a-time output and minimum streaming latency; `4` is the recommended starting point for buffered/offline generation.
 
 ### Fixed
 
@@ -24,11 +24,11 @@
 - Replaced manual attention matmul/softmax sequences with `mx.fast.scaled_dot_product_attention` for FlowLM and Mimi.
 - Replaced manual trigonometric RoPE construction with a fused `mx.fast.rope` call shared by query and key tensors.
 - Evaluate FlowLM EOS output and Mimi audio together, reducing streaming generation from two GPU synchronizations to one per yielded frame.
-- Allow offline callers to amortize Mimi decoder dispatch and synchronization overhead across completed latent frames.
+- Allow offline callers to amortize Mimi decoder dispatch and synchronization overhead across completed latent frames. In the local fixed-seed benchmark, batch size `4` reduced median generation time from 0.776 s to 0.625 s (about 24%) while preserving output length; batched decoder arithmetic can produce small floating-point waveform differences.
 
 ### Tests
 
-- Added regression coverage for oversized clause splitting, text normalization, dictionary loading and composition, and generation-path pronunciation overrides.
+- Added regression coverage for oversized clause splitting, text normalization, dictionary loading and composition, generation-path pronunciation overrides, deterministic sampling, missing-EOS recovery, single-sync streaming, and batched Mimi decoding.
 
 ## v0.2.1 - 2026-02-11
 
