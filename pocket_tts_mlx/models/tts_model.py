@@ -27,15 +27,17 @@ from pocket_tts_mlx.models.mimi import MimiModel
 from pocket_tts_mlx.modules.dummy_quantizer import DummyQuantizer
 from pocket_tts_mlx.modules.mimi_transformer import ProjectedTransformer
 from pocket_tts_mlx.modules.seanet import SEANetDecoder, SEANetEncoder
-from pocket_tts_mlx.modules.stateful_module import increment_steps, init_states
+from pocket_tts_mlx.modules.stateful_module import StatefulModule, increment_steps, init_states
 from pocket_tts_mlx.text_normalization import UserDictionary, normalize_text
 from pocket_tts_mlx.utils.config import Config, load_config
 from pocket_tts_mlx.utils.utils import display_execution_time, download_if_necessary, size_of_dict
 from pocket_tts_mlx.utils.weight_conversion import (
     PREDEFINED_VOICES,
+    get_predefined_voice_state_uri,
     get_flow_lm_state_dict_mlx,
     get_mimi_state_dict_mlx,
     load_predefined_voice_mlx,
+    load_model_state_mlx,
     load_safetensors_to_numpy,
     load_weights_to_mlx_model,
 )
@@ -80,6 +82,7 @@ class TTSModel(nn.Module):
         self.eos_threshold = eos_threshold
         self.config = config
         self.has_voice_cloning = True
+        self.origin: Path | None = None
 
     @property
     def device(self) -> str:
@@ -105,7 +108,10 @@ class TTSModel(nn.Module):
         tts_model = cls._from_pydantic_config(config, temp, lsd_decode_steps, noise_clamp, eos_threshold)
 
         # Initialize speaker projection weight for audio conditioning.
-        tts_model.flow_lm.speaker_proj_weight = mx.zeros((1024, 512), dtype=mx.float32)
+        speaker_dim = config.mimi.inner_dim or config.mimi.seanet.dimension
+        tts_model.flow_lm.speaker_proj_weight = mx.zeros(
+            (config.flow_lm.transformer.d_model, speaker_dim), dtype=mx.float32
+        )
 
         if config.flow_lm.weights_path is not None:
             if config.mimi.weights_path is None:
@@ -131,6 +137,8 @@ class TTSModel(nn.Module):
             decoder,
             quantizer,
             channels=mimi_config["channels"],
+            inner_dim=mimi_config["inner_dim"],
+            outer_dim=mimi_config["outer_dim"],
             sample_rate=mimi_config["sample_rate"],
             frame_rate=mimi_config["frame_rate"],
             encoder_frame_rate=mimi_config["sample_rate"] / encoder.hop_length,
@@ -200,6 +208,14 @@ class TTSModel(nn.Module):
 
         if config.flow_lm.weights_path is None and config.weights_path is None:
             logger.warning("No weights_path specified, model is uninitialized!")
+
+        # Serialized v2 voice states can be returned without first calling
+        # init_states(), so bind every stateful module to its state key now.
+        for top_module in (tts_model.flow_lm, tts_model.mimi):
+            for module_name, module in top_module.named_modules():
+                if isinstance(module, StatefulModule):
+                    module._module_absolute_name = module_name
+
         size_in_mb = size_of_dict(tts_model.state_dict()) // 1e6 if hasattr(tts_model, "state_dict") else 0
         logging.info("TTS Model loaded successfully. Size ~%d MB", size_in_mb)
         return tts_model
@@ -214,15 +230,17 @@ class TTSModel(nn.Module):
         eos_threshold: float = DEFAULT_EOS_THRESHOLD,
     ):
         """Create and load a configured TTSModel with weights."""
-        if str(config).endswith(".yaml"):
+        if str(config).endswith((".yaml", ".yml")):
             config_path = Path(config)
             config = load_config(config_path)
             logger.info("Loading model from config at %s...", config_path)
         else:
-            config = load_config(Path(__file__).parents[1] / f"config/{config}.yaml")
+            config_path = Path(__file__).parents[1] / f"config/{config}.yaml"
+            config = load_config(config_path)
         tts_model = cls._from_pydantic_config_with_weights(
             config, temp, lsd_decode_steps, noise_clamp, eos_threshold
         )
+        tts_model.origin = config_path
         return tts_model
 
     def _run_flow_lm_and_increment_step(
@@ -399,6 +417,11 @@ class TTSModel(nn.Module):
             raise ValueError("temperature must be non-negative")
         if decode_batch_size < 1:
             raise ValueError("decode_batch_size must be at least 1")
+        if (
+            frames_after_eos is None
+            and self.config.model_recommended_frames_after_eos is not None
+        ):
+            frames_after_eos = self.config.model_recommended_frames_after_eos
 
         sampling_key = mx.random.key(seed) if seed is not None else None
         chunks = split_into_best_sentences(
@@ -407,13 +430,19 @@ class TTSModel(nn.Module):
             max_tokens,
             dictionary=dictionary,
             language=language,
+            pad_with_spaces_for_short_inputs=self.config.pad_with_spaces_for_short_inputs,
+            remove_semicolons=self.config.remove_semicolons,
         )
         for chunk in chunks:
             chunk_key = None
             if sampling_key is not None:
                 split_keys = mx.random.split(sampling_key, 2)
                 sampling_key, chunk_key = split_keys[0], split_keys[1]
-            text_to_generate, frames_after_eos_guess = prepare_text_prompt(chunk)
+            text_to_generate, frames_after_eos_guess = prepare_text_prompt(
+                chunk,
+                pad_with_spaces_for_short_inputs=self.config.pad_with_spaces_for_short_inputs,
+                remove_semicolons=self.config.remove_semicolons,
+            )
             frames_after_eos_guess += 2
             effective_frames = (
                 frames_after_eos if frames_after_eos is not None else frames_after_eos_guess
@@ -610,7 +639,24 @@ class TTSModel(nn.Module):
     def get_state_for_audio_prompt(
         self, audio_conditioning: Union[Path, str, mx.array], truncate: bool = False
     ) -> Dict:
-        if isinstance(audio_conditioning, str) and audio_conditioning in PREDEFINED_VOICES:
+        conditioning_path = str(audio_conditioning).split("@", 1)[0]
+        if isinstance(audio_conditioning, (str, Path)) and conditioning_path.endswith(
+            ".safetensors"
+        ):
+            if isinstance(audio_conditioning, str):
+                audio_conditioning = download_if_necessary(audio_conditioning)
+            tensors = load_safetensors_to_numpy(audio_conditioning)
+            if any("/" in key for key in tensors):
+                return load_model_state_mlx(audio_conditioning)
+            prompt_tensor = tensors.get("audio_prompt")
+            if prompt_tensor is None:
+                raise KeyError("Expected serialized model state or audio_prompt tensor")
+            prompt = mx.array(prompt_tensor)
+        elif isinstance(audio_conditioning, str) and audio_conditioning in PREDEFINED_VOICES:
+            variant = self.origin.stem if self.origin is not None else DEFAULT_VARIANT
+            if variant == "english_2026-04":
+                state_uri = get_predefined_voice_state_uri(variant, audio_conditioning)
+                return load_model_state_mlx(download_if_necessary(state_uri))
             prompt = load_predefined_voice_mlx(audio_conditioning)
         else:
             if not self.has_voice_cloning and isinstance(audio_conditioning, (str, Path)):
@@ -632,6 +678,9 @@ class TTSModel(nn.Module):
 
             with display_execution_time("Encoding audio prompt"):
                 prompt = self._encode_audio(mx.array(audio_conditioning)[None, ...])
+
+        if self.flow_lm.insert_bos_before_voice:
+            prompt = mx.concatenate([self.flow_lm.bos_before_voice, prompt], axis=1)
 
         model_state = init_states(self.flow_lm, batch_size=1, sequence_length=prompt.shape[1])
         with display_execution_time("Prompting audio"):
@@ -679,8 +728,14 @@ def split_into_best_sentences(
     max_tokens: int,
     dictionary: UserDictionary | None = None,
     language: str = "english",
+    pad_with_spaces_for_short_inputs: bool = True,
+    remove_semicolons: bool = False,
 ) -> list[str]:
-    text_to_generate, _ = prepare_text_prompt(text_to_generate)
+    text_to_generate, _ = prepare_text_prompt(
+        text_to_generate,
+        pad_with_spaces_for_short_inputs=pad_with_spaces_for_short_inputs,
+        remove_semicolons=remove_semicolons,
+    )
     text_to_generate = normalize_text(
         text_to_generate, language=language, dictionary=dictionary
     )
@@ -747,11 +802,17 @@ def split_into_best_sentences(
     return chunks
 
 
-def prepare_text_prompt(text: str) -> tuple[str, int]:
+def prepare_text_prompt(
+    text: str,
+    pad_with_spaces_for_short_inputs: bool = True,
+    remove_semicolons: bool = False,
+) -> tuple[str, int]:
     text = text.strip()
     if text == "":
         raise ValueError("Text prompt cannot be empty")
     text = text.replace("\n", " ").replace("\r", " ").replace("  ", " ")
+    if remove_semicolons:
+        text = text.replace(";", ",")
     number_of_words = len(text.split())
 
     if number_of_words <= 4:
@@ -765,7 +826,7 @@ def prepare_text_prompt(text: str) -> tuple[str, int]:
     if text[-1].isalnum():
         text = text + "."
 
-    if len(text.split()) < 5:
+    if pad_with_spaces_for_short_inputs and len(text.split()) < 5:
         text = " " * 8 + text
 
     return text, frames_after_eos_guess

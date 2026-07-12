@@ -25,6 +25,8 @@ class MimiModel(nn.Module):
         encoder_frame_rate: float,
         sample_rate: int,
         channels: int,
+        inner_dim: int | None,
+        outer_dim: int | None,
         encoder_transformer: ProjectedTransformer,
         decoder_transformer: ProjectedTransformer,
     ):
@@ -48,8 +50,12 @@ class MimiModel(nn.Module):
             assert self.encoder_frame_rate > self.frame_rate, "Cannot upsample with conv."
             downsample_stride = self.encoder_frame_rate / self.frame_rate
             assert downsample_stride == int(downsample_stride)
-            self.downsample = ConvDownsample1d(int(downsample_stride), dimension=dimension)
-            self.upsample = ConvTrUpsample1d(int(downsample_stride), dimension=dimension)
+            self.downsample = ConvDownsample1d(
+                int(downsample_stride), dimension=dimension, out_dimension=inner_dim
+            )
+            self.upsample = ConvTrUpsample1d(
+                int(downsample_stride), dimension=dimension, in_dimension=outer_dim
+            )
 
     @property
     def frame_size(self) -> int:

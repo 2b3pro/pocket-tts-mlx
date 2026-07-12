@@ -35,6 +35,19 @@ PREDEFINED_VOICES = {
 }
 
 
+def get_predefined_voice_state_uri(language: str, voice_name: str) -> str:
+    """Return the upstream v2 precomputed FlowLM state for a built-in voice."""
+    if voice_name not in PREDEFINED_VOICES:
+        raise ValueError(
+            f"Predefined voice '{voice_name}' not found, available voices are {list(PREDEFINED_VOICES)}."
+        )
+    return (
+        "hf://kyutai/pocket-tts-without-voice-cloning/languages/"
+        f"{language}/embeddings/{voice_name}.safetensors"
+        "@e041936c75475d350b405bc870bcf7c22da4e9e6"
+    )
+
+
 def load_safetensors_to_numpy(path: Union[str, Path]) -> Dict[str, np.ndarray]:
     path = Path(path)
     with open(path, "rb") as f:
@@ -87,6 +100,25 @@ def load_predefined_voice_mlx(voice_name: str) -> mx.array:
     if tensor is None:
         raise KeyError("audio_prompt not found in voice embedding file")
     return convert_torch_tensor_to_mlx(tensor)
+
+
+def load_model_state_mlx(path: Union[str, Path]) -> Dict[str, Dict[str, mx.array]]:
+    """Load an upstream serialized FlowLM voice state into MLX state format."""
+    tensors = load_safetensors_to_numpy(path)
+    state: Dict[str, Dict[str, mx.array]] = {}
+    for key, tensor in tensors.items():
+        if "/" not in key:
+            raise ValueError(f"Invalid serialized model-state key: {key!r}")
+        module_name, tensor_name = key.split("/", 1)
+        module_state = state.setdefault(module_name, {})
+        if tensor_name == "offset":
+            # The pre-fusion MLX attention represents its offset as the length
+            # of current_end rather than a scalar value.
+            offset = int(tensor.reshape(-1)[0])
+            module_state["current_end"] = mx.zeros((offset,), dtype=mx.int64)
+        else:
+            module_state[tensor_name] = convert_torch_tensor_to_mlx(tensor)
+    return state
 
 
 def load_safetensors_to_mlx(path: Union[str, Path], key_filter: str | None = None) -> Dict[str, mx.array]:

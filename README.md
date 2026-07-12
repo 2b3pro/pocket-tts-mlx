@@ -85,6 +85,15 @@ pocket-tts-mlx "Hello, world!" --temperature 0.5 --seed 42
 Equivalent Python arguments are `temperature` and `seed` on
 `generate_audio()` and `generate_audio_stream()`.
 
+Use the newer April 2026 English checkpoint explicitly:
+
+```bash
+pocket-tts-mlx "Hello, world!" --model english_2026-04
+```
+
+The legacy `b6369a24` checkpoint remains the default while the newer model is
+evaluated. In Python, use `TTSModel.load_model("english_2026-04")`.
+
 For faster offline generation, batch completed latent frames through the Mimi
 decoder (four is a good starting point):
 

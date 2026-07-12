@@ -49,6 +49,7 @@ class FlowLMConfig(StrictModel):
     # conditioning
     lookup_table: LookupTable
     weights_path: str | None = None
+    insert_bos_before_voice: bool = False
 
 
 # SEANet configuration
@@ -105,6 +106,8 @@ class MimiConfig(StrictModel):
     # Quantizer
     quantizer: QuantizerConfig
     weights_path: str | None = None
+    inner_dim: int | None = None
+    outer_dim: int | None = None
 
 
 class Config(StrictModel):
@@ -113,6 +116,9 @@ class Config(StrictModel):
     mimi: MimiConfig
     weights_path: str | None = None
     weights_path_without_voice_cloning: str | None = None
+    pad_with_spaces_for_short_inputs: bool = False
+    remove_semicolons: bool = False
+    model_recommended_frames_after_eos: int | None = None
 
 
 def load_config(yaml_path: str | Path) -> Config:

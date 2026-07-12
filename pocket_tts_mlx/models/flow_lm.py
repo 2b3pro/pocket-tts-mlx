@@ -40,6 +40,7 @@ class FlowLMModel(nn.Module):
         stats_ema_decay: float = 0.999,
         text_padding_weight: float = 1.0,
         dtype=None,
+        insert_bos_before_voice: bool = False,
     ):
         super().__init__()
         self.conditioner = conditioner
@@ -53,6 +54,9 @@ class FlowLMModel(nn.Module):
         self.emb_std = mx.ones((ldim,), dtype=dtype)
         self.emb_mean = mx.zeros((ldim,), dtype=dtype)
         self.bos_emb = mx.random.normal(shape=(ldim,)).astype(dtype)
+        self.insert_bos_before_voice = insert_bos_before_voice
+        if insert_bos_before_voice:
+            self.bos_before_voice = mx.random.normal(shape=(1, 1, dim)).astype(dtype)
 
         self.input_linear = nn.Linear(ldim, dim, bias=False)
         self.transformer = transformer
@@ -77,6 +81,7 @@ class FlowLMModel(nn.Module):
             conditioner=conditioner,
             ldim=latent_dim,
             dtype=getattr(mx, config.dtype),
+            insert_bos_before_voice=config.insert_bos_before_voice,
         )
 
     def __call__(

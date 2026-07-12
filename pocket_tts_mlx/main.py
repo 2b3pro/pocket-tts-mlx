@@ -10,7 +10,11 @@ import numpy as np
 import soundfile as sf
 
 from pocket_tts_mlx import TTSModel
-from pocket_tts_mlx.default_parameters import DEFAULT_TEMPERATURE, MAX_TOKEN_PER_CHUNK
+from pocket_tts_mlx.default_parameters import (
+    DEFAULT_TEMPERATURE,
+    DEFAULT_VARIANT,
+    MAX_TOKEN_PER_CHUNK,
+)
 from pocket_tts_mlx.text_normalization import UserDictionary
 
 logger = logging.getLogger(__name__)
@@ -51,6 +55,11 @@ def main() -> int:
     )
     parser.add_argument("text", help="Text to convert to speech")
     parser.add_argument("--voice", "-v", default="marius", help="Voice name (default: marius)")
+    parser.add_argument(
+        "--model",
+        default=DEFAULT_VARIANT,
+        help="Bundled model variant or local YAML config (default: b6369a24)",
+    )
     parser.add_argument("--output", "-o", default="output.wav", help="Output WAV file")
     parser.add_argument(
         "--max-tokens", type=int, default=MAX_TOKEN_PER_CHUNK, help="Max tokens per chunk"
@@ -112,7 +121,7 @@ def main() -> int:
 
     try:
         logger.info("Loading MLX model...")
-        model = TTSModel.load_model(temp=args.temperature)
+        model = TTSModel.load_model(config=args.model, temp=args.temperature)
 
         logger.info("Loading voice: %s", args.voice)
         model_state = model.get_state_for_audio_prompt(args.voice)

@@ -44,8 +44,9 @@ def _reference_rope(q, k, offset=0, max_period=10_000):
 
 class FastRoPETests(unittest.TestCase):
     def test_matches_traditional_reference_at_streaming_offset(self):
-        q = mx.random.normal((1, 16, 8, 64))
-        k = mx.random.normal((1, 16, 8, 64))
+        q_key, k_key = mx.random.split(mx.random.key(2), 2)
+        q = mx.random.normal((1, 16, 8, 64), key=q_key)
+        k = mx.random.normal((1, 16, 8, 64), key=k_key)
 
         expected_q, expected_k = _reference_rope(q, k, offset=128)
         actual_q, actual_k = apply_rope(q, k, offset=128)
