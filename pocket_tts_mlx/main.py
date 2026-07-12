@@ -70,6 +70,12 @@ def main() -> int:
         help="Retries when buffered generation reaches its safety limit without EOS",
     )
     parser.add_argument(
+        "--decode-batch-size",
+        type=int,
+        default=1,
+        help="Mimi frames per buffered decode (try 4 for faster offline generation)",
+    )
+    parser.add_argument(
         "--trim-start-ms",
         type=int,
         default=0,
@@ -125,6 +131,7 @@ def main() -> int:
             temperature=args.temperature,
             seed=args.seed,
             max_retries=args.max_retries,
+            decode_batch_size=args.decode_batch_size,
         )
 
         out_path = Path(args.output)

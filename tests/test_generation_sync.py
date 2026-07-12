@@ -24,12 +24,17 @@ class _FlowLM:
 
 
 class _Mimi(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.decode_calls = 0
+
     def quantizer(self, value):
         return value
 
     def decode_from_latent(self, latent, state):
         del state
-        return mx.broadcast_to(latent[:, :1, :1], (1, 1, 4))
+        self.decode_calls += 1
+        return mx.repeat(latent[:, :1, :], 4, axis=-1)
 
 
 class _GenerationHarness:
@@ -101,6 +106,24 @@ class GenerationSynchronizationTests(unittest.TestCase):
         self.assertEqual(len(chunks), 2)
         self.assertEqual(evaluate.call_count, 3)
         self.assertTrue(all(len(call.args) == 2 for call in evaluate.call_args_list))
+
+    def test_batched_decode_groups_completed_latents(self):
+        harness = _GenerationHarness()
+
+        chunks = list(
+            harness._generate_audio_stream_short_text(
+                model_state={},
+                text_to_generate="Hello.",
+                frames_after_eos=1,
+                copy_state=False,
+                warmup_frames=0,
+                decode_batch_size=4,
+            )
+        )
+
+        self.assertEqual(harness.mimi.decode_calls, 1)
+        self.assertEqual(len(chunks), 1)
+        self.assertEqual(chunks[0].shape, (8,))
 
 
 if __name__ == "__main__":

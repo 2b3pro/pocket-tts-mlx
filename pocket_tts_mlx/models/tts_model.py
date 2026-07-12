@@ -332,8 +332,14 @@ class TTSModel(nn.Module):
         temperature: float | None = None,
         seed: int | None = None,
         max_retries: int = 1,
+        decode_batch_size: int = 1,
     ) -> mx.array:
-        """Generate full audio, retrying attempts that never reach EOS."""
+        """Generate full audio, retrying attempts that never reach EOS.
+
+        ``decode_batch_size`` groups completed FlowLM latent frames for Mimi
+        decoding. Values greater than one improve buffered-generation
+        throughput at the cost of additional streaming latency.
+        """
         if max_retries < 0:
             raise ValueError("max_retries must be non-negative")
 
@@ -353,6 +359,7 @@ class TTSModel(nn.Module):
                     language=language,
                     temperature=temperature,
                     seed=attempt_seed,
+                    decode_batch_size=decode_batch_size,
                     _raise_on_missing_eos=True,
                 ):
                     audio_chunks.append(chunk)
@@ -384,11 +391,14 @@ class TTSModel(nn.Module):
         language: str = "english",
         temperature: float | None = None,
         seed: int | None = None,
+        decode_batch_size: int = 1,
         _raise_on_missing_eos: bool = False,
     ) -> Generator[mx.array, None, None]:
         """Yield audio chunks as they are generated."""
         if temperature is not None and temperature < 0:
             raise ValueError("temperature must be non-negative")
+        if decode_batch_size < 1:
+            raise ValueError("decode_batch_size must be at least 1")
 
         sampling_key = mx.random.key(seed) if seed is not None else None
         chunks = split_into_best_sentences(
@@ -416,6 +426,7 @@ class TTSModel(nn.Module):
                 warmup_frames=warmup_frames,
                 temperature=temperature,
                 sampling_key=chunk_key,
+                decode_batch_size=decode_batch_size,
                 raise_on_missing_eos=_raise_on_missing_eos,
             )
 
@@ -428,6 +439,7 @@ class TTSModel(nn.Module):
         warmup_frames: int,
         temperature: float | None = None,
         sampling_key: Optional[mx.array] = None,
+        decode_batch_size: int = 1,
         raise_on_missing_eos: bool = False,
     ):
         """Generate audio for a short prompt with streaming FlowLM."""
@@ -471,6 +483,16 @@ class TTSModel(nn.Module):
         steps_times = []
         eos_step = None
         total_generated_samples = 0
+        pending_latents = []
+
+        def decode_latents(latents):
+            """Decode one or more completed FlowLM frames with Mimi."""
+            mimi_decoding_input = latents * self.flow_lm.emb_std + self.flow_lm.emb_mean
+            transposed = mx.transpose(mimi_decoding_input, (0, 2, 1))
+            quantized = self.mimi.quantizer(transposed)
+            audio_frame = self.mimi.decode_from_latent(quantized, mimi_state)
+            increment_steps(self.mimi, mimi_state, increment=16 * latents.shape[1])
+            return audio_frame[0, 0]
 
         for generation_step in range(max_gen_len):
             with display_execution_time("Generating latent", print_output=False) as timer:
@@ -481,29 +503,47 @@ class TTSModel(nn.Module):
                     sampling_key=next_sampling_key(),
                 )
 
-                # Decode latent frame into audio via Mimi.
-                mimi_decoding_input = next_latent * self.flow_lm.emb_std + self.flow_lm.emb_mean
-                transposed = mx.transpose(mimi_decoding_input, (0, 2, 1))
-                quantized = self.mimi.quantizer(transposed)
-                audio_frame = self.mimi.decode_from_latent(quantized, mimi_state)
-                increment_steps(self.mimi, mimi_state, increment=16)
-                audio_chunk = audio_frame[0, 0]
+                if decode_batch_size == 1:
+                    audio_chunk = decode_latents(next_latent)
 
-                # Materialize FlowLM EOS and Mimi audio together to avoid two
-                # GPU synchronizations for every yielded frame.
-                mx.eval(is_eos, audio_chunk)
-                is_eos_scalar = bool(is_eos.item())
-                if is_eos_scalar and eos_step is None:
-                    eos_step = generation_step
-                if eos_step is not None and generation_step >= eos_step + frames_after_eos:
-                    break
+                    # Materialize FlowLM EOS and Mimi audio together to avoid two
+                    # GPU synchronizations for every yielded frame.
+                    mx.eval(is_eos, audio_chunk)
+                    is_eos_scalar = bool(is_eos.item())
+                    if is_eos_scalar and eos_step is None:
+                        eos_step = generation_step
+                    if eos_step is not None and generation_step >= eos_step + frames_after_eos:
+                        break
 
-                total_generated_samples += audio_chunk.shape[-1]
-                yield audio_chunk
+                    total_generated_samples += audio_chunk.shape[-1]
+                    yield audio_chunk
+                else:
+                    # FlowLM is autoregressive, so finish each latent before the
+                    # next step. Mimi can then decode completed latents in groups.
+                    mx.eval(is_eos, next_latent)
+                    is_eos_scalar = bool(is_eos.item())
+                    if is_eos_scalar and eos_step is None:
+                        eos_step = generation_step
+                    if eos_step is not None and generation_step >= eos_step + frames_after_eos:
+                        break
+
+                    pending_latents.append(next_latent)
+                    if len(pending_latents) >= decode_batch_size:
+                        audio_chunk = decode_latents(mx.concatenate(pending_latents, axis=1))
+                        mx.eval(audio_chunk)
+                        pending_latents.clear()
+                        total_generated_samples += audio_chunk.shape[-1]
+                        yield audio_chunk
 
                 backbone_input = next_latent
 
             steps_times.append(timer.elapsed_time_ms)
+
+        if pending_latents:
+            audio_chunk = decode_latents(mx.concatenate(pending_latents, axis=1))
+            mx.eval(audio_chunk)
+            total_generated_samples += audio_chunk.shape[-1]
+            yield audio_chunk
 
         duration_generated_audio = int(total_generated_samples * 1000 / self.config.mimi.sample_rate)
         generation_time = int((time.monotonic() - t_generating) * 1000)

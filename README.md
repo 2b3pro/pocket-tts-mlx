@@ -85,6 +85,17 @@ pocket-tts-mlx "Hello, world!" --temperature 0.5 --seed 42
 Equivalent Python arguments are `temperature` and `seed` on
 `generate_audio()` and `generate_audio_stream()`.
 
+For faster offline generation, batch completed latent frames through the Mimi
+decoder (four is a good starting point):
+
+```bash
+pocket-tts-mlx "Hello, world!" --decode-batch-size 4
+```
+
+The equivalent Python argument is `decode_batch_size=4`. The default is `1`
+to preserve frame-at-a-time streaming latency and exact output. Larger batches
+can introduce small floating-point differences in the decoded waveform.
+
 Use a pronunciation dictionary:
 
 ```bash
@@ -125,6 +136,10 @@ Equivalent Python args are `warmup_frames`, `trim_start_ms`, and `fade_in_ms`.
 **Performance Note**
 
 `generate_audio()` now materializes generated chunks before returning, so `np.array(audio)` overhead should be near zero in normal usage.
+
+Buffered callers can opt into batched Mimi decoding with
+`decode_batch_size=4`. Streaming callers should generally retain the default
+of `1` unless throughput matters more than first-audio latency.
 
 **Voices**
 
