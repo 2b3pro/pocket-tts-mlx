@@ -16,13 +16,16 @@ FIRST_CHUNK_LENGTH_SECONDS = float(os.environ.get("FIRST_CHUNK_LENGTH_SECONDS", 
 
 
 def audio_read(filepath: str | Path) -> tuple[np.ndarray, int]:
-    """Read audio file. WAV uses built-in wave; others require soundfile."""
+    """Read audio file. PCM16 WAV uses ``wave``; other formats use soundfile."""
     filepath = Path(filepath)
 
     if filepath.suffix.lower() == ".wav":
         with wave.open(str(filepath), "rb") as wav_file:
             sample_rate = wav_file.getframerate()
             n_channels = wav_file.getnchannels()
+            sample_width = wav_file.getsampwidth()
+            if sample_width != 2:
+                return _audio_read_with_soundfile(filepath)
             raw_data = wav_file.readframes(-1)
             # Normalize int16 PCM to float32 in [-1, 1].
             samples = np.frombuffer(raw_data, dtype=np.int16).astype(np.float32) / 32768.0
@@ -30,11 +33,17 @@ def audio_read(filepath: str | Path) -> tuple[np.ndarray, int]:
                 samples = samples.reshape(-1, n_channels).mean(axis=1)
             return samples[None, :], sample_rate
 
+    return _audio_read_with_soundfile(filepath)
+
+
+def _audio_read_with_soundfile(filepath: Path) -> tuple[np.ndarray, int]:
+    """Read non-PCM16 audio without assuming its sample representation."""
     try:
         import soundfile as sf
     except ImportError as e:
         raise ImportError(
-            "soundfile is required to read non-WAV audio files. Install with: pip install soundfile"
+            "soundfile is required to read non-WAV or non-16-bit WAV audio files. "
+            "Install with: pip install soundfile"
         ) from e
 
     data, sample_rate = sf.read(str(filepath), dtype="float32")
@@ -53,6 +62,7 @@ class StreamingWAVWriter:
         self.sample_rate = sample_rate
         self.wave_writer = None
         self.first_chunk_buffer = []
+        self.is_seekable = _is_seekable(output_stream)
 
     def write_header(self, sample_rate: int):
         """Write a placeholder WAV header for streaming output."""
@@ -60,7 +70,8 @@ class StreamingWAVWriter:
         self.wave_writer.setnchannels(1)
         self.wave_writer.setsampwidth(2)
         self.wave_writer.setframerate(sample_rate)
-        self.wave_writer.setnframes(1_000_000_000)
+        if not self.is_seekable:
+            self.wave_writer.setnframes(1_000_000_000)
 
     def write_pcm_data(self, audio_chunk: Any):
         """Write a chunk of float audio as int16 PCM."""
@@ -95,13 +106,27 @@ class StreamingWAVWriter:
         num_silence_samples = int(self.sample_rate * silence_duration_sec)
         self.wave_writer.writeframesraw(bytes(num_silence_samples * 2))
         if self.wave_writer:
-            self.wave_writer._patchheader = lambda: None
+            # An unseekable response stream cannot patch its header after data
+            # has been emitted. Seekable files should record their true length.
+            if not self.is_seekable:
+                self.wave_writer._patchheader = lambda: None
             self.wave_writer.close()
 
 
 def is_file_like(obj):
     """Return True for file-like objects that support write and close."""
     return all(hasattr(obj, attr) for attr in ["write", "close"])
+
+
+def _is_seekable(obj) -> bool:
+    """Return whether a stream supports the seeks needed to patch a WAV header."""
+    seekable = getattr(obj, "seekable", None)
+    if seekable is not None:
+        try:
+            return bool(seekable())
+        except OSError:
+            return False
+    return all(hasattr(obj, attr) for attr in ("seek", "tell"))
 
 
 def stream_audio_chunks(

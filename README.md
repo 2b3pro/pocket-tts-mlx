@@ -100,6 +100,16 @@ pocket-tts-mlx "Hello, world!" --model b6369a24
 In Python, `TTSModel.load_model()` uses `english_2026-04`; pass
 `TTSModel.load_model("b6369a24")` for the legacy model.
 
+An experimental 24-layer English checkpoint is available as an opt-in quality
+comparison. It is substantially larger and slower than the default model:
+
+```bash
+pocket-tts-mlx "Hello, world!" --model english_2026-04_24l
+```
+
+In Python, use `TTSModel.load_model("english_2026-04_24l")`. The six-layer
+`english_2026-04` checkpoint remains the default.
+
 For faster offline generation, batch completed latent frames through the Mimi
 decoder (four is a good starting point):
 

@@ -11,7 +11,6 @@ import soundfile as sf
 
 from pocket_tts_mlx import TTSModel
 from pocket_tts_mlx.default_parameters import (
-    DEFAULT_TEMPERATURE,
     DEFAULT_VARIANT,
     MAX_TOKEN_PER_CHUNK,
 )
@@ -64,12 +63,17 @@ def main() -> int:
     parser.add_argument(
         "--max-tokens", type=int, default=MAX_TOKEN_PER_CHUNK, help="Max tokens per chunk"
     )
-    parser.add_argument("--frames-after-eos", type=int, default=7, help="Frames after EOS")
+    parser.add_argument(
+        "--frames-after-eos",
+        type=int,
+        default=None,
+        help="Frames after EOS (default: model/text recommendation)",
+    )
     parser.add_argument(
         "--temperature",
         type=float,
-        default=DEFAULT_TEMPERATURE,
-        help="Sampling temperature (lower is more consistent)",
+        default=None,
+        help="Sampling temperature (default: model recommendation)",
     )
     parser.add_argument("--seed", type=int, default=None, help="Deterministic generation seed")
     parser.add_argument(

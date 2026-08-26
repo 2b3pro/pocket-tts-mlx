@@ -4,6 +4,7 @@
 
 ### Added
 
+- Added opt-in compatibility with upstream's 24-layer April 2026 English checkpoint.
 - Ported upstream text normalization for decimals and currency so structural punctuation is converted to spoken text before tokenization.
 - Added `UserDictionary` pronunciation overrides with JSON/YAML loading, language-specific and common sections, literal or regex matching, and dictionary composition.
 - Added CLI `--dictionary` support and automatic loading from `~/.config/pocket-tts/dictionary.{yaml,yml,json}`.
@@ -15,10 +16,13 @@
 
 ### Changed
 
+- Use each model config's recommended sampling temperature; the April 2026 English models now default to upstream's evaluated `0.3`, while legacy configs retain `0.7`.
 - Promoted `english_2026-04` to the default model after reliability, reproducibility, pronunciation, and legacy-regression evaluation. The previous `b6369a24` checkpoint remains available through `TTSModel.load_model("b6369a24")` and CLI `--model b6369a24` for comparison or rollback.
 
 ### Fixed
 
+- Preserve fully prepared short prompts during streaming generation instead of discarding padding and punctuation adjustments before tokenization.
+- Correct seekable WAV headers, safely decode non-16-bit WAV prompts, and recognize remote safetensors and HTTP cache suffixes with revisions or query strings.
 - Split oversized single sentences at commas, semicolons, and colons before generation, keeping each natural clause group within `max_tokens` when possible. Previously, a sentence without terminal punctuation before the end could bypass the chunk limit and produce skipped words, garbled speech, or an excessively long audio tail.
 - Warn when a chunk still exceeds `max_tokens` because it contains no usable sentence or clause boundary.
 - Aligned the CLI `--max-tokens` default with the safer 50-token library default instead of 500.
@@ -35,6 +39,7 @@
 
 ### Tests
 
+- Added macOS ARM CI for dependency validation and the complete unittest suite.
 - Added regression coverage for oversized clause splitting, text normalization, dictionary loading and composition, generation-path pronunciation overrides, deterministic sampling, missing-EOS recovery, single-sync streaming, batched Mimi decoding, v2 configuration, resampler dimensions, prompt behavior, and serialized voice-state conversion.
 
 ## v0.2.1 - 2026-02-11

@@ -7,6 +7,7 @@ import time
 from functools import lru_cache
 from pathlib import Path
 from typing import Dict, Generator, Optional, Union
+from urllib.parse import urlsplit
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -18,7 +19,6 @@ from pocket_tts_mlx.default_parameters import (
     DEFAULT_EOS_THRESHOLD,
     DEFAULT_LSD_DECODE_STEPS,
     DEFAULT_NOISE_CLAMP,
-    DEFAULT_TEMPERATURE,
     DEFAULT_VARIANT,
     MAX_TOKEN_PER_CHUNK,
 )
@@ -27,17 +27,25 @@ from pocket_tts_mlx.models.mimi import MimiModel
 from pocket_tts_mlx.modules.dummy_quantizer import DummyQuantizer
 from pocket_tts_mlx.modules.mimi_transformer import ProjectedTransformer
 from pocket_tts_mlx.modules.seanet import SEANetDecoder, SEANetEncoder
-from pocket_tts_mlx.modules.stateful_module import StatefulModule, increment_steps, init_states
+from pocket_tts_mlx.modules.stateful_module import (
+    StatefulModule,
+    increment_steps,
+    init_states,
+)
 from pocket_tts_mlx.text_normalization import UserDictionary, normalize_text
 from pocket_tts_mlx.utils.config import Config, load_config
-from pocket_tts_mlx.utils.utils import display_execution_time, download_if_necessary, size_of_dict
+from pocket_tts_mlx.utils.utils import (
+    display_execution_time,
+    download_if_necessary,
+    size_of_dict,
+)
 from pocket_tts_mlx.utils.weight_conversion import (
     PREDEFINED_VOICES,
-    get_predefined_voice_state_uri,
     get_flow_lm_state_dict_mlx,
     get_mimi_state_dict_mlx,
-    load_predefined_voice_mlx,
+    get_predefined_voice_state_uri,
     load_model_state_mlx,
+    load_predefined_voice_mlx,
     load_safetensors_to_numpy,
     load_weights_to_mlx_model,
 )
@@ -47,6 +55,7 @@ logger = logging.getLogger(__name__)
 
 class GenerationDidNotReachEOS(RuntimeError):
     """Raised when buffered generation reaches its safety limit without EOS."""
+
 
 VOICE_CLONING_UNSUPPORTED = (
     f"We could not download the weights for the model with voice cloning, "
@@ -224,7 +233,7 @@ class TTSModel(nn.Module):
     def load_model(
         cls,
         config: str | Path = DEFAULT_VARIANT,
-        temp: float | int = DEFAULT_TEMPERATURE,
+        temp: float | int | None = None,
         lsd_decode_steps: int = DEFAULT_LSD_DECODE_STEPS,
         noise_clamp: float | int | None = DEFAULT_NOISE_CLAMP,
         eos_threshold: float = DEFAULT_EOS_THRESHOLD,
@@ -237,6 +246,8 @@ class TTSModel(nn.Module):
         else:
             config_path = Path(__file__).parents[1] / f"config/{config}.yaml"
             config = load_config(config_path)
+        if temp is None:
+            temp = config.default_temperature
         tts_model = cls._from_pydantic_config_with_weights(
             config, temp, lsd_decode_steps, noise_clamp, eos_threshold
         )
@@ -449,7 +460,7 @@ class TTSModel(nn.Module):
             )
             yield from self._generate_audio_stream_short_text(
                 model_state=model_state,
-                text_to_generate=chunk,
+                text_to_generate=text_to_generate,
                 frames_after_eos=effective_frames,
                 copy_state=copy_state,
                 warmup_frames=warmup_frames,
@@ -639,9 +650,8 @@ class TTSModel(nn.Module):
     def get_state_for_audio_prompt(
         self, audio_conditioning: Union[Path, str, mx.array], truncate: bool = False
     ) -> Dict:
-        conditioning_path = str(audio_conditioning).split("@", 1)[0]
-        if isinstance(audio_conditioning, (str, Path)) and conditioning_path.endswith(
-            ".safetensors"
+        if isinstance(audio_conditioning, (str, Path)) and _is_safetensors_source(
+            audio_conditioning
         ):
             if isinstance(audio_conditioning, str):
                 audio_conditioning = download_if_necessary(audio_conditioning)
@@ -654,7 +664,7 @@ class TTSModel(nn.Module):
             prompt = mx.array(prompt_tensor)
         elif isinstance(audio_conditioning, str) and audio_conditioning in PREDEFINED_VOICES:
             variant = self.origin.stem if self.origin is not None else DEFAULT_VARIANT
-            if variant == "english_2026-04":
+            if variant in {"english_2026-04", "english_2026-04_24l"}:
                 state_uri = get_predefined_voice_state_uri(variant, audio_conditioning)
                 return load_model_state_mlx(download_if_necessary(state_uri))
             prompt = load_predefined_voice_mlx(audio_conditioning)
@@ -691,6 +701,16 @@ class TTSModel(nn.Module):
             size_of_dict(model_state) // 1e6,
         )
         return model_state
+
+
+def _is_safetensors_source(source: str | Path) -> bool:
+    """Recognize local and remote safetensors paths with revisions or queries."""
+    source_text = str(source)
+    if source_text.startswith(("http://", "https://")):
+        source_text = urlsplit(source_text).path
+    elif source_text.startswith("hf://"):
+        source_text = source_text.rsplit("@", 1)[0]
+    return source_text.endswith(".safetensors")
 
 
 def _find_boundary_indices(list_of_tokens: list[int], boundary_tokens: list[int]) -> list[int]:
