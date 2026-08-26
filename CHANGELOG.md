@@ -42,6 +42,11 @@
 - Added macOS ARM CI for dependency validation and the complete unittest suite.
 - Added regression coverage for oversized clause splitting, text normalization, dictionary loading and composition, generation-path pronunciation overrides, deterministic sampling, missing-EOS recovery, single-sync streaming, batched Mimi decoding, v2 configuration, resampler dimensions, prompt behavior, and serialized voice-state conversion.
 
+### Documentation
+
+- Clarified that `pocket-tts-mlx` is an independent port and does not automatically consume updates from a neighboring `pocket-tts` checkout.
+- Added model-selection guidance, configured temperatures, local six-layer versus 24-layer resource measurements, and links to the corresponding upstream changes.
+
 ## v0.2.1 - 2026-02-11
 
 ### Added

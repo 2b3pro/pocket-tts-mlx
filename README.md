@@ -4,12 +4,37 @@ MLX backend for [pocket-tts](https://github.com/kyutai-labs/pocket-tts) optimize
 
 Runtime is torch-free. Torch is only required for optional parity tests.
 
+**Current Development (`Unreleased`)**
+
+- Uses the April 2026 six-layer English model by default, with its recommended
+  sampling temperature of `0.3`.
+- Adds the upstream 24-layer English checkpoint as an opt-in model.
+- Ports upstream prompt preparation, WAV handling, and remote asset fixes.
+- Adds macOS ARM continuous integration.
+
 **What's New in 0.2.1**
 
 - Cleaner audio onset with `--warmup-frames`, `--trim-start-ms`, and `--fade-in-ms`.
 - Upstream-aligned KV-cache sizing for better memory/runtime behavior.
 - Lower perceived overhead after `generate_audio()` by materializing chunks before return.
 - Release: [PyPI 0.2.1](https://pypi.org/project/pocket-tts-mlx/0.2.1/) · [GitHub v0.2.1](https://github.com/jishnuvenugopal/pocket-tts-mlx/releases/tag/v0.2.1)
+
+**Relationship to pocket-tts**
+
+This repository is an independent MLX port, not a wrapper around a local
+`pocket-tts` checkout. Keeping the repositories next to each other on disk does
+not connect them, and updating `pocket-tts` does not change this package.
+
+The runtime implementation, configuration, and tests live in this repository.
+`pocket-tts` appears only in the optional `dev` dependency group for parity
+testing; it is not imported or installed by a normal `pocket-tts-mlx` install.
+Upstream changes must therefore be reviewed and ported deliberately.
+
+Recent manual ports include:
+
+- [Prompt, WAV, and remote asset fixes](https://github.com/kyutai-labs/pocket-tts/pull/210)
+- [English sampling-temperature evaluation](https://github.com/kyutai-labs/pocket-tts/pull/223)
+- [The 24-layer English checkpoint](https://github.com/kyutai-labs/pocket-tts/pull/245)
 
 **Installation**
 
@@ -76,14 +101,25 @@ Basic usage:
 pocket-tts-mlx "Hello, world!" --voice marius --output output.wav
 ```
 
-Reproducible generation with lower sampling variance:
+Reproducible generation with an explicit sampling temperature:
 
 ```bash
 pocket-tts-mlx "Hello, world!" --temperature 0.5 --seed 42
 ```
 
 Equivalent Python arguments are `temperature` and `seed` on
-`generate_audio()` and `generate_audio_stream()`.
+`generate_audio()` and `generate_audio_stream()`. If no temperature is passed,
+the model's configured recommendation is used. Likewise, omitting
+`--frames-after-eos` lets the model and prepared text choose the value; pass an
+integer only when an explicit override is needed.
+
+**Model Selection**
+
+| Model | Role | Default temperature |
+| --- | --- | ---: |
+| `english_2026-04` | Recommended six-layer default | `0.3` |
+| `english_2026-04_24l` | Opt-in 24-layer quality comparison | `0.3` |
+| `b6369a24` | Legacy comparison and rollback | `0.7` |
 
 The April 2026 English checkpoint is the default:
 
@@ -109,6 +145,22 @@ pocket-tts-mlx "Hello, world!" --model english_2026-04_24l
 
 In Python, use `TTSModel.load_model("english_2026-04_24l")`. The six-layer
 `english_2026-04` checkpoint remains the default.
+
+Local validation on a 32 GB Apple Silicon Mac produced the following results.
+Generation time is the median of three post-load runs and excludes initial
+download and model-loading time. The generated utterances had different
+durations, so these measurements show practical resource cost rather than a
+controlled model-quality comparison.
+
+| Model | Peak memory | Median generation | Generated audio | Real-time speed |
+| --- | ---: | ---: | ---: | ---: |
+| Six-layer | 1.04 GiB | 0.301 s | 2.40 s | 8.29x |
+| 24-layer | 2.39 GiB | 0.702 s | 3.44 s | 4.92x |
+
+Both models generated finite audio faster than real time. The 24-layer model
+loaded its matching weights and predefined voice state successfully, but its
+quality benefit should be judged with a listening evaluation before making it
+the default.
 
 For faster offline generation, batch completed latent frames through the Mimi
 decoder (four is a good starting point):
@@ -190,6 +242,8 @@ Predefined voices:
 
 - Voice cloning requires Hugging Face access to `kyutai/pocket-tts`.
 - Non-voice-cloning weights are used automatically when voice cloning is unavailable.
+- Model weights and predefined voice states are downloaded and cached on first use.
+- Updating an adjacent source checkout of `pocket-tts` does not update this package.
 
 **Release Notes**
 
