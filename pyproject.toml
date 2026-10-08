@@ -28,6 +28,7 @@ dependencies = [
     "numpy",
     "safetensors",
     "sentencepiece>=0.2.1",
+    "tokenizers>=0.21",
     "pydantic>=2",
     "pyyaml>=6.0",
     "requests>=2.20.0",

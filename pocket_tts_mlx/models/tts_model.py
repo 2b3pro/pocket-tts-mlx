@@ -24,6 +24,7 @@ from pocket_tts_mlx.default_parameters import (
 )
 from pocket_tts_mlx.models.flow_lm import FlowLMModel
 from pocket_tts_mlx.models.mimi import build_mimi
+from pocket_tts_mlx.models.text_chunking import prepare_text_prompt, split_into_best_sentences
 from pocket_tts_mlx.modules.stateful_module import increment_steps, init_states
 from pocket_tts_mlx.utils.config import Config, load_config
 from pocket_tts_mlx.utils.utils import display_execution_time, download_if_necessary, size_of_dict
@@ -337,22 +338,37 @@ class TTSModel(nn.Module):
         warmup_frames: int = _MIMI_WARMUP_FRAMES,
     ) -> Generator[mx.array, None, None]:
         """Yield audio chunks as they are generated."""
+        prompt_kwargs = self._text_prompt_kwargs()
         chunks = split_into_best_sentences(
-            self.flow_lm.conditioner.tokenizer, text_to_generate, max_tokens
+            self.flow_lm.conditioner.tokenizer,
+            text_to_generate,
+            max_tokens,
+            **prompt_kwargs,
         )
         for chunk in chunks:
-            text_to_generate, frames_after_eos_guess = prepare_text_prompt(chunk)
+            prepared_text, frames_after_eos_guess = prepare_text_prompt(chunk, **prompt_kwargs)
             frames_after_eos_guess += 2
             effective_frames = (
                 frames_after_eos if frames_after_eos is not None else frames_after_eos_guess
             )
             yield from self._generate_audio_stream_short_text(
                 model_state=model_state,
-                text_to_generate=chunk,
+                text_to_generate=prepared_text,
                 frames_after_eos=effective_frames,
                 copy_state=copy_state,
                 warmup_frames=warmup_frames,
             )
+
+    def _text_prompt_kwargs(self) -> dict:
+        """Text flags from the loaded config."""
+        config = self.config
+        return {
+            "pad_with_spaces_for_short_inputs": config.pad_with_spaces_for_short_inputs,
+            "remove_semicolons": config.remove_semicolons,
+            "append_terminal_punctuation": config.append_terminal_punctuation,
+            "capitalize_first_letter": config.capitalize_first_letter,
+            "replace_characters": config.replace_characters,
+        }
 
     def _generate_audio_stream_short_text(
         self,
@@ -506,78 +522,3 @@ class TTSModel(nn.Module):
             size_of_dict(model_state) // 1e6,
         )
         return model_state
-
-
-def split_into_best_sentences(tokenizer, text_to_generate: str, max_tokens: int) -> list[str]:
-    text_to_generate, _ = prepare_text_prompt(text_to_generate)
-    text_to_generate = text_to_generate.strip()
-    tokens = tokenizer(text_to_generate)
-    list_of_tokens = tokens.tokens[0].tolist()
-
-    _, *end_of_sentence_tokens = tokenizer(".!...?").tokens[0].tolist()
-
-    end_of_sentences_indices = [0]
-    previous_was_end_of_sentence_token = False
-
-    for token_idx, token in enumerate(list_of_tokens):
-        if token in end_of_sentence_tokens:
-            previous_was_end_of_sentence_token = True
-        else:
-            if previous_was_end_of_sentence_token:
-                end_of_sentences_indices.append(token_idx)
-            previous_was_end_of_sentence_token = False
-    end_of_sentences_indices.append(len(list_of_tokens))
-
-    nb_tokens_and_sentences = []
-    for i in range(len(end_of_sentences_indices) - 1):
-        start = end_of_sentences_indices[i]
-        end = end_of_sentences_indices[i + 1]
-        text = tokenizer.sp.decode(list_of_tokens[start:end])
-        nb_tokens_and_sentences.append((end - start, text))
-
-    max_nb_tokens_in_a_chunk = max_tokens
-    chunks = []
-    current_chunk = ""
-    current_nb_of_tokens_in_chunk = 0
-
-    for nb_tokens, sentence in nb_tokens_and_sentences:
-        if current_chunk == "":
-            current_chunk = sentence
-            current_nb_of_tokens_in_chunk = nb_tokens
-            continue
-
-        if current_nb_of_tokens_in_chunk + nb_tokens > max_nb_tokens_in_a_chunk:
-            chunks.append(current_chunk.strip())
-            current_chunk = sentence
-            current_nb_of_tokens_in_chunk = nb_tokens
-        else:
-            current_chunk += " " + sentence
-            current_nb_of_tokens_in_chunk += nb_tokens
-
-    if current_chunk != "":
-        chunks.append(current_chunk.strip())
-    return chunks
-
-
-def prepare_text_prompt(text: str) -> tuple[str, int]:
-    text = text.strip()
-    if text == "":
-        raise ValueError("Text prompt cannot be empty")
-    text = text.replace("\n", " ").replace("\r", " ").replace("  ", " ")
-    number_of_words = len(text.split())
-
-    if number_of_words <= 4:
-        frames_after_eos_guess = 3
-    else:
-        frames_after_eos_guess = 1
-
-    if not text[0].isupper():
-        text = text[0].upper() + text[1:]
-
-    if text[-1].isalnum():
-        text = text + "."
-
-    if len(text.split()) < 5:
-        text = " " * 8 + text
-
-    return text, frames_after_eos_guess
