@@ -1,5 +1,5 @@
 ---
-updated_at: "08 Oct 2026 | 07:49 PM IST"
+updated_at: "08 Oct 2026 | 07:56 PM IST"
 ---
 
 # Koder State
@@ -14,6 +14,7 @@ updated_at: "08 Oct 2026 | 07:49 PM IST"
 - `5f5528e` L2: `lsd`, `flow_matching`, and `drifting` samplers. Backbone FFN uses the tanh GELU formula.
 - `fd7ef3e` L3: Mimi width follows `inner_dim` / `outer_dim`. Speaker projection is `(d_model, inner or 512)`. Latents stay `[B, T, C]` and are quantized once.
 - `2319155` L4: `tokenizers` / `.json` loads Hugging Face tokenizers; `.model` stays SentencePiece. Chunking honors the five text flags and calls `tokenizer.decode`. Generation receives the prepared chunk.
+- `6f2c9fc`: `koder/AGENTS.md` says to run MLX commands with the sandbox disabled on the first attempt. A sandboxed `import mlx` aborts.
 
 ## Present
 
@@ -23,8 +24,8 @@ updated_at: "08 Oct 2026 | 07:49 PM IST"
   - `b6369a24` matches the MLX tree on all 213 keys;
   - voice states carry `offset`/`pad`, which this port maps to `current_end`.
 - EOS handling, the per-chunk fade, and the Mimi step of 16 are still the v0.2.1 path. Text flags and the new sampler are live.
-- Validation: `.venv/bin/python -m pytest -q` → 31 passed, outside the command sandbox. A sandboxed MLX import aborts. Scratch gate clean. `git diff --check` clean.
-- Local `main` is 11 commits ahead of `origin/main`. Nothing pushed.
+- Validation: `.venv/bin/python -m pytest -q` → 31 passed, sandbox disabled. Scratch gate clean. `git diff --check` clean.
+- Local `main` is 12 commits ahead of `origin/main` after this close. Nothing pushed.
 
 ## Future
 
@@ -32,3 +33,4 @@ updated_at: "08 Oct 2026 | 07:49 PM IST"
 - Then L6 → L7, one commit per layer with a clean tree between layers. The owner already authorized the build.
 - Owner decisions still pending: push, tag `v0.3.0`, PyPI publish (L8). Renaming the `Untitled/` folder is optional.
 - Use `.venv` only. `a separate kyutai venv` imports a different checkout.
+- Run pytest and any other MLX import with the sandbox disabled. Skip the sandboxed run.
