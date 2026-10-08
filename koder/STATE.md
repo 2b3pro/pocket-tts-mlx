@@ -1,5 +1,5 @@
 ---
-updated_at: "08 Oct 2026 | 07:56 PM IST"
+updated_at: "08 Oct 2026 | 08:27 PM IST"
 ---
 
 # Koder State
@@ -9,28 +9,26 @@ updated_at: "08 Oct 2026 | 07:56 PM IST"
 - v0.2.1 (`b1fe6a4`) is the published MLX port. PyPI `0.2.1`; remote tag `v0.2.1` → `1342d4d`.
 - Koder scaffold: `0d1e841`. `CHANGELOG.md` stays the history surface.
 - `d37c30b`: analysis 001, issue 001 (track), plan 001 rev 2, reviews 01 and 02. Upstream read at `41cbc84`.
-- `59d499f` L0: repo `.venv`, pytest `testpaths`, weight-free v0.2.1 text pins.
-- `6ef0d70` L1: config schema matches `41cbc84`. Nineteen language YAMLs. `b6369a24` keeps `pad_with_spaces_for_short_inputs: true`.
-- `5f5528e` L2: `lsd`, `flow_matching`, and `drifting` samplers. Backbone FFN uses the tanh GELU formula.
-- `fd7ef3e` L3: Mimi width follows `inner_dim` / `outer_dim`. Speaker projection is `(d_model, inner or 512)`. Latents stay `[B, T, C]` and are quantized once.
-- `2319155` L4: `tokenizers` / `.json` loads Hugging Face tokenizers; `.model` stays SentencePiece. Chunking honors the five text flags and calls `tokenizer.decode`. Generation receives the prepared chunk.
-- `6f2c9fc`: `koder/AGENTS.md` says to run MLX commands with the sandbox disabled on the first attempt. A sandboxed `import mlx` aborts.
+- `59d499f` L0 through `2319155` L4: test scaffold, language configs, samplers, Mimi width, tokenizer and chunking.
+- `6f2c9fc`: run MLX commands with the sandbox disabled. A sandboxed `import mlx` aborts.
+- `686a51c` L5: ignore EOS before frame 6, fade the first `sample_rate // 200` samples of each chunk, `end_on_pause` before encoding a cloned waveform, frames-after-EOS fallback, Mimi step from `encoder_frame_rate / frame_rate`. Warmup default is 0.
+- `ba13bcf` L6: strict bundle load. Voice states map `offset` to `current_end`, reject non-zero `pad`, and skip audio prompting. `b6369a24` keeps the 8-name `audio_prompt` catalog.
+- `d2d8f44` L7: version `0.3.0` from `pocket_tts_mlx.__version__`. Default `load_model()` is `english` at the config temperature. CLI voice follows the language.
+- `dcb7c0a` L8: `MANIFEST.in` keeps `tests/` and `koder/` out of the sdist.
 
 ## Present
 
-- Active plan: `koder/plans/001_update_pocket_tts_mlx/INDEX.md` (rev 2). Ledger: `koder/issues/001_update_to_current_pocket_tts/INDEX.md`. L0–L4 are `done`; L5–L8 are `candidate`.
-- Facts the plan still rests on:
-  - shipped bundles are already fused;
-  - `b6369a24` matches the MLX tree on all 213 keys;
-  - voice states carry `offset`/`pad`, which this port maps to `current_end`.
-- EOS handling, the per-chunk fade, and the Mimi step of 16 are still the v0.2.1 path. Text flags and the new sampler are live.
-- Validation: `.venv/bin/python -m pytest -q` → 31 passed, sandbox disabled. Scratch gate clean. `git diff --check` clean.
-- Local `main` is 12 commits ahead of `origin/main` after this close. Nothing pushed.
+- Plan 001 rev 2 is built. Ledger `koder/issues/001_update_to_current_pocket_tts/INDEX.md` is `done` for L0–L8.
+- Local version is `0.3.0`. It is not tagged, not pushed, and not on PyPI. `v0.2.1` remains the published release.
+- Upstream voice catalog at `41cbc84` has 27 names. The plan text said 26.
+- Shipped bundles are fused. Strict load raises on a missing parameter, an unplaceable key, or a shape mismatch.
+- Validation: `.venv/bin/python -m pytest -q` → 64 passed, sandbox disabled. Scratch gate clean. `git diff --check` clean.
+- Wheel check: `twine check` passed. The wheel lists 20 YAMLs under `pocket_tts_mlx/config/` and does not package `koder/` or `tests/`. A fresh venv installed `0.3.0` and `pocket-tts-mlx --language english` wrote a 24 kHz wav.
+- Local `main` is 17 commits ahead of `origin/main` after this close. Nothing pushed.
 
 ## Future
 
-- Next action: L5. Ignore EOS before frame 6. Fade the first `sample_rate // 200` samples of each chunk (120 at 24 kHz). Run `end_on_pause` on a cloned-voice waveform before encoding. When `frames_after_eos` is unset, use `model_recommended_frames_after_eos`, then the text guess + 2. Set the Mimi step from `encoder_frame_rate / frame_rate`. Defaults for `warmup_frames`, `trim_start_ms`, and `fade_in_ms` become 0. One commit. Stop the layer if a unit test fails.
-- Then L6 → L7, one commit per layer with a clean tree between layers. The owner already authorized the build.
-- Owner decisions still pending: push, tag `v0.3.0`, PyPI publish (L8). Renaming the `Untitled/` folder is optional.
+- Owner decisions: push `main`, tag `v0.3.0` on `d2d8f44`'s release commit or the later packaging commit, and publish to PyPI. Do not do those unless asked.
+- Renaming the `Untitled/` folder is optional.
 - Use `.venv` only. `a separate kyutai venv` imports a different checkout.
 - Run pytest and any other MLX import with the sandbox disabled. Skip the sandboxed run.
