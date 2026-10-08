@@ -44,7 +44,7 @@ Rows stay `candidate` until a later build is authorized. The mapping work (analy
 
 | Slice | Status | Ref | Queue | Closure gate |
 | --- | --- | --- | --- | --- |
-| Test scaffold and local env | candidate | plan 001 L0 | | `pytest -q` in repo `.venv` |
+| Test scaffold and local env | done | plan 001 L0 | | `pytest -q` in repo `.venv` |
 | Config schema and language YAMLs | candidate | plan 001 L1 | | YAML parse test |
 | Flow head, sampler, tanh GELU | candidate | plan 001 L2 | | Unit test, no weights |
 | Mimi inner/outer dims and latent layout | candidate | plan 001 L3 | | Shape test plus old YAML still builds |

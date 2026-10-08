@@ -48,7 +48,7 @@ Header-only reads, no weight download:
 
 ### L0: Test scaffold and local env
 
-- Create a repo-local `.venv` (gitignored) and `pip install -e ".[dev]"` there. Do not test through `a separate kyutai venv`; its editable install points at another checkout.
+- Create a repo-local `.venv` (gitignored) and `pip install -e . pytest` there. The `[dev]` extra (torch, pocket-tts) is only needed for parity tests, and none exist yet. Do not test through `a separate kyutai venv`; its editable install points at another checkout.
 - Add `tests/` and `[tool.pytest.ini_options] testpaths = ["tests"]` to `pyproject.toml`.
 - Add one baseline weight-free test, for example that `b6369a24.yaml` parses and `prepare_text_prompt` keeps v0.2.1 behavior.
 - Proof: `python -m pytest -q` passes in `.venv`.

@@ -58,3 +58,6 @@ include = ["pocket_tts_mlx*"]
 
 [tool.setuptools.package-data]
 pocket_tts_mlx = ["config/*.yaml", "config/*.yml", "*.yaml", "*.yml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
