@@ -6,7 +6,7 @@ updated: 2026-10-08
 tags: mlx, pocket-tts, inference
 type: feature
 issue_kind: track
-context: Plan 001 rev 2 passed two reviews. The owner asked to build. L0–L6 are done; later slices stay candidate.
+context: Plan 001 rev 2 passed two reviews. The owner asked to build. L0–L7 are done; L8 stays candidate.
 ---
 
 # Issue 001: Update the MLX runtime to current Pocket TTS inference
@@ -40,7 +40,7 @@ The track stays open until the slice ledger is implemented.
 
 ## Slice Ledger
 
-The owner authorized the build. L0–L6 are done. Later rows stay `candidate`. The track closes when the ledger is implemented.
+The owner authorized the build. L0–L7 are done. L8 stays `candidate`. The track closes when the ledger is implemented.
 
 | Slice | Status | Ref | Queue | Closure gate |
 | --- | --- | --- | --- | --- |
@@ -51,5 +51,5 @@ The owner authorized the build. L0–L6 are done. Later rows stay `candidate`. T
 | Tokenizer and text chunking | done | plan 001 L4 | | Unit test, no weights |
 | EOS, fade, end-on-pause | done | plan 001 L5 | | Unit test, no weights |
 | Strict bundle load and voice-state import | done | plan 001 L6 | | Strict load, then short clips |
-| API, CLI, docs, version | candidate | plan 001 L7 | | CLI help and a wav |
+| API, CLI, docs, version | done | plan 001 L7 | | CLI help and a wav |
 | Release preparation (owner-gated) | candidate | plan 001 L8 | | Wheel check and fresh-venv smoke |

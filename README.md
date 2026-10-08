@@ -4,12 +4,13 @@ MLX backend for [pocket-tts](https://github.com/kyutai-labs/pocket-tts) optimize
 
 Runtime is torch-free. Torch is only required for optional parity tests.
 
-**What's New in 0.2.1**
+**What's New in 0.3.0**
 
-- Cleaner audio onset with `--warmup-frames`, `--trim-start-ms`, and `--fade-in-ms`.
-- Upstream-aligned KV-cache sizing for better memory/runtime behavior.
-- Lower perceived overhead after `generate_audio()` by materializing chunks before return.
-- Release: [PyPI 0.2.1](https://pypi.org/project/pocket-tts-mlx/0.2.1/) · [GitHub v0.2.1](https://github.com/jishnuvenugopal/pocket-tts-mlx/releases/tag/v0.2.1)
+- Default model is `english` (the current English weights) at temperature 0.3.
+- Shipped languages include french, german, dutch, italian, portuguese, and spanish, plus 24-layer previews and a drifting English sampler.
+- Current models use `tokenizer.json`. `b6369a24` still uses SentencePiece.
+- Built-in voices follow the language. `--language french` uses `estelle`.
+- Release notes: [v0.3.0](CHANGELOG.md).
 
 **Installation**
 
@@ -38,55 +39,38 @@ hf auth login
 from pocket_tts_mlx import TTSModel
 
 model = TTSModel.load_model()
-state = model.get_state_for_audio_prompt("marius")
-audio = model.generate_audio(
-    state,
-    "Hello from MLX!",
-    max_tokens=200,
-    warmup_frames=1,
-    trim_start_ms=40,
-    fade_in_ms=15,
-)
+state = model.get_state_for_audio_prompt("alba")
+audio = model.generate_audio(state, "Hello from MLX!")
 ```
+
+`load_model()` loads `english`. `load_model("b6369a24")` still loads the previous weights. Pass `temp=0.7` when you want the old temperature. `load_model(language="french")` selects another shipped config. Pass `config` or `language`, not both.
 
 **CLI**
 
-Basic usage:
-
 ```bash
-pocket-tts-mlx "Hello, world!" --voice marius --output output.wav
+pocket-tts-mlx --language english -o hello.wav "Hello, world!"
+pocket-tts-mlx --language french -o bonjour.wav "Bonjour."
 ```
 
-Cleaner onset (recommended if startup artifacts are audible):
-
-```bash
-pocket-tts-mlx "Hello, world!" --voice marius --output output.wav --warmup-frames 1 --trim-start-ms 40 --fade-in-ms 15
-```
-
-**Onset Cleanup Options**
-
-- `--warmup-frames`: decode and discard initial Mimi frames to reduce decoder startup transients.
-- `--trim-start-ms`: trim milliseconds from start of output.
-- `--fade-in-ms`: apply linear fade-in at start.
-
-Equivalent Python args are `warmup_frames`, `trim_start_ms`, and `fade_in_ms`.
-
-**Performance Note**
-
-`generate_audio()` now materializes generated chunks before returning, so `np.array(audio)` overhead should be near zero in normal usage.
+`--temperature` overrides the config value. `--max-tokens` defaults to 50, `--frames-after-eos` is unset, and `--warmup-frames` defaults to 0. Text `-` reads stdin.
 
 **Voices**
 
-Predefined voices:
+The default voice follows the language:
 
-- alba
-- marius
-- javert
-- jean
-- fantine
-- cosette
-- eponine
-- azelma
+- english, and any other stem: `alba`
+- french: `estelle`
+- italian: `giovanni`
+- german: `juergen`
+- spanish: `lola`
+- portuguese: `rafael`
+- dutch: `daan`
+
+Other built-in names (`marius`, `javert`, `jean`, and the rest of the upstream catalog) work with a model loaded from a shipped config. `b6369a24` keeps its original eight voices as audio prompts. A config from outside this package does not accept those names; pass an audio file instead.
+
+**Onset options**
+
+`--warmup-frames`, `--trim-start-ms`, and `--fade-in-ms` still trim or fade the start of the file. They default to 0. Each chunk also fades its first 5 ms on its own.
 
 **Requirements**
 
@@ -102,11 +86,5 @@ Predefined voices:
 
 **Release Notes**
 
-- Latest: [`v0.2.1`](https://pypi.org/project/pocket-tts-mlx/0.2.1/)
-- Full history: [`CHANGELOG.md`](CHANGELOG.md)
-- Recommended clean-onset preset:
-
-```bash
-pocket-tts-mlx "Hello, world!" --voice marius --output output.wav --warmup-frames 1 --trim-start-ms 40 --fade-in-ms 15
-```
-
+- Latest: [v0.3.0](CHANGELOG.md)
+- Previous package: [PyPI 0.2.1](https://pypi.org/project/pocket-tts-mlx/0.2.1/)

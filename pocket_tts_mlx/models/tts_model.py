@@ -17,10 +17,9 @@ from pocket_tts_mlx.data.audio import audio_read
 from pocket_tts_mlx.data.audio_utils import convert_audio, end_on_pause
 from pocket_tts_mlx.default_parameters import (
     DEFAULT_EOS_THRESHOLD,
-    DEFAULT_LSD_DECODE_STEPS,
+    DEFAULT_LANGUAGE,
     DEFAULT_NOISE_CLAMP,
-    DEFAULT_TEMPERATURE,
-    DEFAULT_VARIANT,
+    DEFAULT_SAMPLER_DECODE_STEPS,
     MAX_TOKEN_PER_CHUNK,
 )
 from pocket_tts_mlx.models.flow_lm import FlowLMModel
@@ -108,6 +107,33 @@ def prepend_voice_bos(prompt: mx.array, bos: mx.array, insert: bool) -> mx.array
 
 
 CONFIGS_DIR = Path(__file__).resolve().parents[1] / "config"
+
+
+def select_model_request(config: str | Path | None, language: str | None) -> str | Path:
+    """Pick one config stem or path. Omitting both selects english."""
+    if config is not None and language is not None:
+        raise ValueError("Cannot specify both config and language, please choose one or the other.")
+    if config is None and language is None:
+        return DEFAULT_LANGUAGE
+    if language is not None:
+        return language
+    assert config is not None
+    return config
+
+
+def resolve_temperature(temp: float | int | None, default_temperature: float) -> float:
+    """Use the config temperature when the caller does not pass one."""
+    if temp is None:
+        return default_temperature
+    return float(temp)
+
+
+def resolve_sampler_steps(sampler_decode_steps: int, lsd_decode_steps: int | None) -> int:
+    """`lsd_decode_steps` is the deprecated name for `sampler_decode_steps`."""
+    if lsd_decode_steps is not None:
+        logger.warning("lsd_decode_steps is deprecated, use sampler_decode_steps")
+        return lsd_decode_steps
+    return sampler_decode_steps
 
 
 def resolve_config_path(config: str | Path) -> Path:
@@ -240,6 +266,7 @@ class TTSModel(nn.Module):
         super().__init__()
         self.flow_lm = flow_lm
         self.temp = temp
+        self.sampler_decode_steps = lsd_decode_steps
         self.lsd_decode_steps = lsd_decode_steps
         self.noise_clamp = noise_clamp
         self.eos_threshold = eos_threshold
@@ -322,18 +349,30 @@ class TTSModel(nn.Module):
     @classmethod
     def load_model(
         cls,
-        config: str | Path = DEFAULT_VARIANT,
-        temp: float | int = DEFAULT_TEMPERATURE,
-        lsd_decode_steps: int = DEFAULT_LSD_DECODE_STEPS,
+        config: str | Path | None = None,
+        temp: float | int | None = None,
+        lsd_decode_steps: int | None = None,
         noise_clamp: float | int | None = DEFAULT_NOISE_CLAMP,
         eos_threshold: float = DEFAULT_EOS_THRESHOLD,
+        *,
+        language: str | None = None,
+        sampler_decode_steps: int = DEFAULT_SAMPLER_DECODE_STEPS,
     ):
-        """Create and load a configured TTSModel with weights."""
-        config_path = resolve_config_path(config)
+        """Create and load a configured TTSModel with weights.
+
+        `config` stays the first positional argument, so `load_model("b6369a24")`
+        still selects that file. `language` is keyword-only. Passing both is an
+        error. Omitting both loads `english`. An omitted `temp` uses the config's
+        `default_temperature`.
+        """
+        requested = select_model_request(config, language)
+        sampler_steps = resolve_sampler_steps(sampler_decode_steps, lsd_decode_steps)
+        config_path = resolve_config_path(requested)
         loaded = load_config(config_path)
+        temperature = resolve_temperature(temp, loaded.default_temperature)
         logger.info("Loading model from config at %s...", config_path)
         tts_model = cls._from_pydantic_config_with_weights(
-            loaded, temp, lsd_decode_steps, noise_clamp, eos_threshold
+            loaded, temperature, sampler_steps, noise_clamp, eos_threshold
         )
         tts_model.origin = config_path.resolve()
         return tts_model
