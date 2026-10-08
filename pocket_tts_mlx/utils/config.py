@@ -16,6 +16,9 @@ class FlowConfig(StrictModel):
     """Flow MLP depth and width settings."""
     dim: int
     depth: int
+    # "lsd" (2 time conditions, 1-step decode), "flow_matching" (1 time
+    # condition, Euler integration) or "drifting" (no time condition).
+    type: str = "lsd"
 
 
 # Transformer configuration for FlowLM
@@ -49,6 +52,7 @@ class FlowLMConfig(StrictModel):
     # conditioning
     lookup_table: LookupTable
     weights_path: str | None = None
+    insert_bos_before_voice: bool = False
 
 
 # SEANet configuration
@@ -105,6 +109,8 @@ class MimiConfig(StrictModel):
     # Quantizer
     quantizer: QuantizerConfig
     weights_path: str | None = None
+    inner_dim: int | None = None
+    outer_dim: int | None = None
 
 
 class Config(StrictModel):
@@ -113,6 +119,17 @@ class Config(StrictModel):
     mimi: MimiConfig
     weights_path: str | None = None
     weights_path_without_voice_cloning: str | None = None
+    pad_with_spaces_for_short_inputs: bool = False
+    remove_semicolons: bool = False
+    append_terminal_punctuation: bool = True
+    # Off for models whose text is romanised phonemes: a capital is not in
+    # that inventory, so the first word's onset becomes the unknown token.
+    capitalize_first_letter: bool = True
+    # Per-character rewrites applied before tokenization ("" deletes).
+    replace_characters: dict[str, str] = {}
+    model_recommended_frames_after_eos: int | None = None
+    # 0.3 is the shipped default. A config sets its own value only if tuned elsewhere.
+    default_temperature: float = 0.3
 
 
 def load_config(yaml_path: str | Path) -> Config:

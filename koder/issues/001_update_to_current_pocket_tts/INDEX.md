@@ -6,7 +6,7 @@ updated: 2026-10-08
 tags: mlx, pocket-tts, inference
 type: feature
 issue_kind: track
-context: Plan 001 rev 2 passed two reviews. Slices stay candidate until the owner asks to build.
+context: Plan 001 rev 2 passed two reviews. The owner asked to build. L0 and L1 are done; later slices stay candidate.
 ---
 
 # Issue 001: Update the MLX runtime to current Pocket TTS inference
@@ -23,7 +23,7 @@ context: Plan 001 rev 2 passed two reviews. Slices stay candidate until the owne
 - Upstream read at `41cbc84`. Training, the HTTP server, Docker, and torchao are out of scope.
 - Review `koder/reviews/001_update_pocket_tts_mlx/01_plan.md` is `approve with fixes`. Its three fixes are in the plan.
 - Review `koder/reviews/001_update_pocket_tts_mlx/02_plan_rereview.md` is `approve with fixes` (1 P1, 6 P2, 4 P3). It checked published safetensors headers and full upstream history, and its fixes are in plan revision 2.
-- Kind is `track`. No slice is queued. Do not build until the owner asks.
+- Kind is `track`. The owner asked to build on 8 Oct 2026. Implement the next `candidate` slice.
 
 ## Proposed Direction
 
@@ -36,16 +36,16 @@ Follow `koder/plans/001_update_pocket_tts_mlx/INDEX.md` only after its review ve
 - [x] A second review checked the plan against published weight and voice headers. Its fixes are applied.
 - [x] No `pocket_tts_mlx/` edit was made to reach that verdict.
 
-The track stays open until the slice ledger is implemented. Rows stay `candidate`.
+The track stays open until the slice ledger is implemented.
 
 ## Slice Ledger
 
-Rows stay `candidate` until a later build is authorized. The mapping work (analysis, plan, review) is done. The track closes when the ledger is implemented, not at this review.
+The owner authorized the build. L0 and L1 are done. Later rows stay `candidate`. The track closes when the ledger is implemented.
 
 | Slice | Status | Ref | Queue | Closure gate |
 | --- | --- | --- | --- | --- |
 | Test scaffold and local env | done | plan 001 L0 | | `pytest -q` in repo `.venv` |
-| Config schema and language YAMLs | candidate | plan 001 L1 | | YAML parse test |
+| Config schema and language YAMLs | done | plan 001 L1 | | YAML parse test |
 | Flow head, sampler, tanh GELU | candidate | plan 001 L2 | | Unit test, no weights |
 | Mimi inner/outer dims and latent layout | candidate | plan 001 L3 | | Shape test plus old YAML still builds |
 | Tokenizer and text chunking | candidate | plan 001 L4 | | Unit test, no weights |
