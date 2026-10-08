@@ -1,5 +1,5 @@
 ---
-updated_at: "08 Oct 2026 | 08:27 PM IST"
+updated_at: "08 Oct 2026 | 08:36 PM IST"
 ---
 
 # Koder State
@@ -22,9 +22,9 @@ updated_at: "08 Oct 2026 | 08:27 PM IST"
 - Local version is `0.3.0`. It is not tagged, not pushed, and not on PyPI. `v0.2.1` remains the published release.
 - Upstream voice catalog at `41cbc84` has 27 names. The plan text said 26.
 - Shipped bundles are fused. Strict load raises on a missing parameter, an unplaceable key, or a shape mismatch.
-- Validation: `.venv/bin/python -m pytest -q` → 64 passed, sandbox disabled. Scratch gate clean. `git diff --check` clean.
+- Validation, rechecked at this close: `.venv/bin/python -m pytest -q` → 64 passed, sandbox disabled. Scratch gate clean. `git diff --check` clean. No product delta since `1ef2b53`.
 - Wheel check: `twine check` passed. The wheel lists 20 YAMLs under `pocket_tts_mlx/config/` and does not package `koder/` or `tests/`. A fresh venv installed `0.3.0` and `pocket-tts-mlx --language english` wrote a 24 kHz wav.
-- Local `main` is 17 commits ahead of `origin/main` after this close. Nothing pushed.
+- Local `main` is 18 commits ahead of `origin/main` after this close. Nothing pushed.
 
 ## Future
 
