@@ -1,5 +1,5 @@
 ---
-updated_at: "08 Oct 2026 | 08:36 PM IST"
+updated_at: "08 Oct 2026 | 10:06 PM IST"
 ---
 
 # Koder State
@@ -9,26 +9,36 @@ updated_at: "08 Oct 2026 | 08:36 PM IST"
 - v0.2.1 (`b1fe6a4`) is the published MLX port. PyPI `0.2.1`; remote tag `v0.2.1` → `1342d4d`.
 - Koder scaffold: `0d1e841`. `CHANGELOG.md` stays the history surface.
 - `d37c30b`: analysis 001, issue 001 (track), plan 001 rev 2, reviews 01 and 02. Upstream read at `41cbc84`.
-- `59d499f` L0 through `2319155` L4: test scaffold, language configs, samplers, Mimi width, tokenizer and chunking.
-- `6f2c9fc`: run MLX commands with the sandbox disabled. A sandboxed `import mlx` aborts.
-- `686a51c` L5: ignore EOS before frame 6, fade the first `sample_rate // 200` samples of each chunk, `end_on_pause` before encoding a cloned waveform, frames-after-EOS fallback, Mimi step from `encoder_frame_rate / frame_rate`. Warmup default is 0.
-- `ba13bcf` L6: strict bundle load. Voice states map `offset` to `current_end`, reject non-zero `pad`, and skip audio prompting. `b6369a24` keeps the 8-name `audio_prompt` catalog.
-- `d2d8f44` L7: version `0.3.0` from `pocket_tts_mlx.__version__`. Default `load_model()` is `english` at the config temperature. CLI voice follows the language.
-- `dcb7c0a` L8: `MANIFEST.in` keeps `tests/` and `koder/` out of the sdist.
+- `59d499f` L0 through `dcb7c0a` L8: plan 001 is fully built. Version `0.3.0` comes from `pocket_tts_mlx.__version__`. `MANIFEST.in` keeps `tests/` and `koder/` out of the sdist.
+- `87bcf29`: build review `koder/reviews/001_update_pocket_tts_mlx/03_build_review.md`, `approve with fixes` (0 P1, 2 P2, 5 P3). Evidence:
+  - temperature-0 parity with upstream torch: same lengths, corr ≥ 0.999;
+  - all 20 configs strictly match their published headers;
+  - all 513 voice files (27 names × 19 stems) exist;
+  - wheel and sdist contents are correct.
+- Samples for all 7 languages, drifting English and `b6369a24` were generated and sent to the owner, who has not listened yet.
 
 ## Present
 
-- Plan 001 rev 2 is built. Ledger `koder/issues/001_update_to_current_pocket_tts/INDEX.md` is `done` for L0–L8.
-- Local version is `0.3.0`. It is not tagged, not pushed, and not on PyPI. `v0.2.1` remains the published release.
-- Upstream voice catalog at `41cbc84` has 27 names. The plan text said 26.
-- Shipped bundles are fused. Strict load raises on a missing parameter, an unplaceable key, or a shape mismatch.
-- Validation, rechecked at this close: `.venv/bin/python -m pytest -q` → 64 passed, sandbox disabled. Scratch gate clean. `git diff --check` clean. No product delta since `1ef2b53`.
-- Wheel check: `twine check` passed. The wheel lists 20 YAMLs under `pocket_tts_mlx/config/` and does not package `koder/` or `tests/`. A fresh venv installed `0.3.0` and `pocket-tts-mlx --language english` wrote a 24 kHz wav.
-- Local `main` is 18 commits ahead of `origin/main` after this close. Nothing pushed.
+- Ledger `koder/issues/001_update_to_current_pocket_tts/INDEX.md`: L0–L8 `done`. Version `0.3.0` is not tagged, not pushed, and not on PyPI.
+- Release blockers from review 03, still open:
+  - P2-1: tag the final commit, not `d2d8f44`, because an sdist from that commit would include `tests/` and `koder/`;
+  - P2-2: `CHANGELOG.md` lacks the Python `warmup_frames` 1 → 0 break, strict-load errors, the `tokenizers` dependency, and a `### Fixed` section.
+- Optional P3 items:
+  - absolute CHANGELOG links in the README;
+  - a parity test plus `dev` extra `pocket-tts>=3.3.0`;
+  - a completeness check in `import_flow_state`;
+  - the setuptools license format (deadline 2027-02-18);
+  - "Current release" in `koder/AGENTS.md`, to update after publish.
+- Untested: cloning from your own audio with the gated `kyutai/pocket-tts` weights (needs `hf auth login`).
+- Validation: `.venv/bin/python -m pytest -q` → 64 passed. Scratch gate clean. `git diff --check` clean.
+- Disk:
+  - test scratch, the `/tmp/pocket-tts-upstream` clone, `dist/`, `egg-info`, and caches are deleted;
+  - still kept: `../samples/` (2.3 MB, unheard), `.venv` (449 MB), and the HF cache `~/.cache/huggingface/hub/models--kyutai--pocket-tts-without-voice-cloning` (~237 MB on disk).
+- Local `main` is 20 commits ahead of `origin/main` after this close. Nothing pushed.
 
 ## Future
 
-- Owner decisions: push `main`, tag `v0.3.0` on `d2d8f44`'s release commit or the later packaging commit, and publish to PyPI. Do not do those unless asked.
-- Renaming the `Untitled/` folder is optional.
+- Next action: fix P2-2 (changelog) and the README links, run pytest, then tag the final commit as `v0.3.0` (owner-gated).
+- Owner decisions: listen to the samples; push, tag, and PyPI publish; delete `samples/` and the HF cache after listening.
 - Use `.venv` only. `a separate kyutai venv` imports a different checkout.
 - Run pytest and any other MLX import with the sandbox disabled. Skip the sandboxed run.
