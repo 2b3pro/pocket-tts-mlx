@@ -10,10 +10,11 @@ from typing import Dict, Generator, Optional, Union
 
 import mlx.core as mx
 import mlx.nn as nn
+import numpy as np
 
 from pocket_tts_mlx.conditioners.base import TokenizedText
 from pocket_tts_mlx.data.audio import audio_read
-from pocket_tts_mlx.data.audio_utils import convert_audio
+from pocket_tts_mlx.data.audio_utils import convert_audio, end_on_pause
 from pocket_tts_mlx.default_parameters import (
     DEFAULT_EOS_THRESHOLD,
     DEFAULT_LSD_DECODE_STEPS,
@@ -47,6 +48,60 @@ def speaker_proj_shape(config: Config) -> tuple[int, int]:
         config.mimi.inner_dim or config.mimi.seanet.dimension,
     )
 
+
+def mimi_steps_per_latent(encoder_frame_rate: float, frame_rate: float) -> int:
+    """How many Mimi steps one latent frame advances."""
+    return int(encoder_frame_rate / frame_rate)
+
+
+def note_eos_step(
+    is_eos: bool,
+    generation_step: int,
+    eos_step: Optional[int],
+    min_frames: int = 6,
+) -> Optional[int]:
+    """Record the first EOS at or after `min_frames`. Earlier EOS is ignored."""
+    if is_eos and eos_step is None and generation_step >= min_frames:
+        return generation_step
+    return eos_step
+
+
+def resolve_frames_after_eos(
+    frames_after_eos: Optional[int],
+    model_recommended: Optional[int],
+    frames_after_eos_guess: int,
+) -> int:
+    """Prefer the caller, then the config recommendation, then the text guess + 2."""
+    if frames_after_eos is None:
+        frames_after_eos = model_recommended
+    if frames_after_eos is not None:
+        return frames_after_eos
+    return frames_after_eos_guess + 2
+
+
+def apply_chunk_onset_fade(
+    audio: mx.array, fade: Optional[mx.array]
+) -> tuple[mx.array, Optional[mx.array]]:
+    """Fade the first samples of a chunk once. Later frames receive no ramp."""
+    if fade is None or fade.shape[0] == 0:
+        return audio, None
+    n = min(int(fade.shape[0]), int(audio.shape[-1]))
+    if n <= 0:
+        return audio, None
+    faded = audio[..., :n] * fade[:n].astype(audio.dtype)
+    if n < audio.shape[-1]:
+        audio = mx.concatenate([faded, audio[..., n:]], axis=-1)
+    else:
+        audio = faded
+    return audio, None
+
+
+def prepend_voice_bos(prompt: mx.array, bos: mx.array, insert: bool) -> mx.array:
+    """Prepend the learned BOS voice token when the config asks for it."""
+    if not insert:
+        return prompt
+    return mx.concatenate([bos, prompt], axis=1)
+
 VOICE_CLONING_UNSUPPORTED = (
     f"We could not download the weights for the model with voice cloning, "
     f"but you're trying to use voice cloning. "
@@ -62,7 +117,8 @@ class TTSModel(nn.Module):
 
     _TOKENS_PER_SECOND_ESTIMATE = 3.0
     _GEN_SECONDS_PADDING = 2.0
-    _MIMI_WARMUP_FRAMES = 1
+    _MIN_FRAMES_BEFORE_EOS = 6
+    _MIMI_WARMUP_FRAMES = 0
 
     def __init__(
         self,
@@ -347,9 +403,10 @@ class TTSModel(nn.Module):
         )
         for chunk in chunks:
             prepared_text, frames_after_eos_guess = prepare_text_prompt(chunk, **prompt_kwargs)
-            frames_after_eos_guess += 2
-            effective_frames = (
-                frames_after_eos if frames_after_eos is not None else frames_after_eos_guess
+            effective_frames = resolve_frames_after_eos(
+                frames_after_eos,
+                self.config.model_recommended_frames_after_eos,
+                frames_after_eos_guess,
             )
             yield from self._generate_audio_stream_short_text(
                 model_state=model_state,
@@ -408,6 +465,8 @@ class TTSModel(nn.Module):
         steps_times = []
         eos_step = None
         total_generated_samples = 0
+        n_fade = self.sample_rate // 200
+        onset_fade = mx.linspace(0.0, 1.0, n_fade) if n_fade > 0 else None
 
         for generation_step in range(max_gen_len):
             with display_execution_time("Generating latent", print_output=False) as timer:
@@ -416,16 +475,18 @@ class TTSModel(nn.Module):
                 )
 
                 is_eos_scalar = bool(is_eos.item())
-                if is_eos_scalar and eos_step is None:
-                    eos_step = generation_step
+                eos_step = note_eos_step(
+                    is_eos_scalar, generation_step, eos_step, self._MIN_FRAMES_BEFORE_EOS
+                )
                 if eos_step is not None and generation_step >= eos_step + frames_after_eos:
                     break
 
                 # Decode latent frame into audio via Mimi. The codec quantizes.
                 mimi_decoding_input = next_latent * self.flow_lm.emb_std + self.flow_lm.emb_mean
                 audio_frame = self.mimi.decode_from_latent(mimi_decoding_input, mimi_state)
-                increment_steps(self.mimi, mimi_state, increment=16)
+                increment_steps(self.mimi, mimi_state, increment=self._mimi_steps_per_latent())
                 audio_chunk = audio_frame[0, 0]
+                audio_chunk, onset_fade = apply_chunk_onset_fade(audio_chunk, onset_fade)
                 # Force eager execution per chunk for honest timing and smoother streaming.
                 mx.eval(audio_chunk)
                 total_generated_samples += audio_chunk.shape[-1]
@@ -444,6 +505,10 @@ class TTSModel(nn.Module):
             generation_time,
             real_time_factor,
         )
+
+    def _mimi_steps_per_latent(self) -> int:
+        """Mimi streaming step for one generated latent."""
+        return mimi_steps_per_latent(self.mimi.encoder_frame_rate, self.mimi.frame_rate)
 
     def _estimate_max_gen_len(self, token_count: int) -> int:
         """Estimate max generation frames from token count."""
@@ -479,7 +544,7 @@ class TTSModel(nn.Module):
             mimi_decoding_input = zero_latent * self.flow_lm.emb_std + self.flow_lm.emb_mean
             audio_frame = self.mimi.decode_from_latent(mimi_decoding_input, mimi_state)
             mx.eval(audio_frame)
-            increment_steps(self.mimi, mimi_state, increment=16)
+            increment_steps(self.mimi, mimi_state, increment=self._mimi_steps_per_latent())
 
     @lru_cache(maxsize=2)
     def _cached_get_state_for_audio_prompt(
@@ -510,8 +575,13 @@ class TTSModel(nn.Module):
                     audio, conditioning_sample_rate, self.config.mimi.sample_rate, 1
                 )
 
+            audio_conditioning = end_on_pause(
+                np.asarray(audio_conditioning), self.config.mimi.sample_rate
+            )
             with display_execution_time("Encoding audio prompt"):
                 prompt = self._encode_audio(mx.array(audio_conditioning)[None, ...])
+            if self.flow_lm.insert_bos_before_voice:
+                prompt = prepend_voice_bos(prompt, self.flow_lm.bos_before_voice, True)
 
         model_state = init_states(self.flow_lm, batch_size=1, sequence_length=prompt.shape[1])
         with display_execution_time("Prompting audio"):
