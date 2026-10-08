@@ -23,8 +23,8 @@ updated_at: "08 Oct 2026 | 07:49 PM IST"
   - `b6369a24` matches the MLX tree on all 213 keys;
   - voice states carry `offset`/`pad`, which this port maps to `current_end`.
 - EOS handling, the per-chunk fade, and the Mimi step of 16 are still the v0.2.1 path. Text flags and the new sampler are live.
-- Validation: `.venv/bin/python -m pytest -q` → 31 passed. Scratch gate clean. `git diff --check` clean.
-- Local `main` is 10 commits ahead of `origin/main` after this close. Nothing pushed.
+- Validation: `.venv/bin/python -m pytest -q` → 31 passed, outside the command sandbox. A sandboxed MLX import aborts. Scratch gate clean. `git diff --check` clean.
+- Local `main` is 11 commits ahead of `origin/main`. Nothing pushed.
 
 ## Future
 

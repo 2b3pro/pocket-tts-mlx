@@ -58,6 +58,8 @@ This repo uses the koder pattern for durable agent handoff and project memory.
 
 Local setup: use a repo-local `.venv` (gitignored), then `pip install -e . pytest` (Python 3.10+). Run the weight-free tests with `python -m pytest -q` (`tests/`, not packaged). Optional parity tests would need `pip install -e ".[dev]"` (`torch`, `pocket-tts`). Do not commit weights, wavs, or caches (see `.gitignore`).
 
+MLX aborts inside the command sandbox (`Fatal Python error: Aborted` on `import mlx`). Run `.venv/bin/python -m pytest -q` and any other command that imports MLX with the sandbox disabled (`required_permissions: ["all"]`) on the first attempt. Skip the sandboxed run.
+
 Upstream training code, the HTTP server, and torchao quantization are not part of this port. Durable notes about an update belong under `koder/`, not in a second changelog. History stays in root `CHANGELOG.md`.
 
 ## Safety
