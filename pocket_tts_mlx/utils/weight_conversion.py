@@ -28,11 +28,101 @@ _DTYPE_MAP = {
     "BOOL": np.bool_,
 }
 
-_voices_names = ["alba", "marius", "javert", "jean", "fantine", "cosette", "eponine", "azelma"]
+LEGACY_VOICE_REVISION = "d4fdd22ae8c8e1cb3634e150ebeff1dab2d16df3"
+VOICE_STATE_REVISION = "1e08e6a23401048648a9fdcfde2f89348215c2a7"
+# Upstream `_ORIGINS_OF_PREDEFINED_VOICES` at 41cbc84. The plan counted 26;
+# that commit's dict has these 27 keys.
+PREDEFINED_VOICE_NAMES = (
+    "cosette",
+    "marius",
+    "javert",
+    "alba",
+    "jean",
+    "anna",
+    "vera",
+    "fantine",
+    "charles",
+    "paul",
+    "eponine",
+    "azelma",
+    "george",
+    "mary",
+    "jane",
+    "michael",
+    "eve",
+    "bill_boerst",
+    "peter_yearsley",
+    "stuart_bell",
+    "caro_davy",
+    "giovanni",
+    "lola",
+    "juergen",
+    "rafael",
+    "daan",
+    "estelle",
+)
+_LEGACY_VOICE_NAMES = ("alba", "marius", "javert", "jean", "fantine", "cosette", "eponine", "azelma")
 PREDEFINED_VOICES = {
-    x: f"hf://kyutai/pocket-tts-without-voice-cloning/embeddings/{x}.safetensors@d4fdd22ae8c8e1cb3634e150ebeff1dab2d16df3"
-    for x in _voices_names
+    name: (
+        "hf://kyutai/pocket-tts-without-voice-cloning/embeddings/"
+        f"{name}.safetensors@{LEGACY_VOICE_REVISION}"
+    )
+    for name in _LEGACY_VOICE_NAMES
 }
+
+
+def language_voice_state_url(config_stem: str, name: str) -> str:
+    """Per-language streaming state published with the voice-cloning-free bundle."""
+    return (
+        "hf://kyutai/pocket-tts-without-voice-cloning/languages/"
+        f"{config_stem}/embeddings/{name}.safetensors@{VOICE_STATE_REVISION}"
+    )
+
+
+def is_safetensors_source(source: str | Path) -> bool:
+    """True when the path or URL points at a safetensors file, ignoring queries and @rev."""
+    from urllib.parse import urlsplit
+
+    text = str(source)
+    if text.startswith(("http://", "https://")):
+        text = urlsplit(text).path
+    elif text.startswith("hf://"):
+        text = text.rsplit("@", 1)[0]
+    return text.endswith(".safetensors")
+
+
+def import_flow_state(path: str | Path, valid_modules: set[str]) -> Dict[str, Dict[str, mx.array]]:
+    """Load a voice safetensors file into FlowLM streaming state.
+
+    Published states store `offset` and `pad`. This port still addresses the
+    cache with `current_end`, so `offset` becomes a zero vector of that length
+    and a zero `pad` is dropped. A legacy `current_end` tensor is kept as stored.
+    """
+    tensors = load_safetensors_to_numpy(path)
+    if not tensors:
+        raise ValueError(f"Voice state {path} is empty")
+    state: Dict[str, Dict[str, mx.array]] = {}
+    for key, tensor in tensors.items():
+        if "/" not in key:
+            raise ValueError(
+                f"Voice state key {key!r} is not a module field. "
+                "An audio_prompt tensor is not a streaming state."
+            )
+        module_name, field = key.split("/", 1)
+        if module_name not in valid_modules:
+            raise ValueError(f"Voice state module {module_name!r} is outside the flow LM state")
+        bucket = state.setdefault(module_name, {})
+        if field == "pad":
+            pad = int(np.asarray(tensor).reshape(-1)[0])
+            if pad != 0:
+                raise ValueError(f"Voice state pad must be 0, got {pad} for {module_name}")
+            continue
+        if field == "offset":
+            offset = int(np.asarray(tensor).reshape(-1)[0])
+            bucket["current_end"] = mx.zeros((offset,), dtype=mx.int64)
+            continue
+        bucket[field] = mx.array(np.asarray(tensor))
+    return state
 
 
 def load_safetensors_to_numpy(path: Union[str, Path]) -> Dict[str, np.ndarray]:

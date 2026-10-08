@@ -15,26 +15,13 @@ logger = logging.getLogger(__name__)
 FIRST_CHUNK_LENGTH_SECONDS = float(os.environ.get("FIRST_CHUNK_LENGTH_SECONDS", "0"))
 
 
-def audio_read(filepath: str | Path) -> tuple[np.ndarray, int]:
-    """Read audio file. WAV uses built-in wave; others require soundfile."""
-    filepath = Path(filepath)
-
-    if filepath.suffix.lower() == ".wav":
-        with wave.open(str(filepath), "rb") as wav_file:
-            sample_rate = wav_file.getframerate()
-            n_channels = wav_file.getnchannels()
-            raw_data = wav_file.readframes(-1)
-            # Normalize int16 PCM to float32 in [-1, 1].
-            samples = np.frombuffer(raw_data, dtype=np.int16).astype(np.float32) / 32768.0
-            if n_channels > 1:
-                samples = samples.reshape(-1, n_channels).mean(axis=1)
-            return samples[None, :], sample_rate
-
+def _read_with_soundfile(filepath: Path) -> tuple[np.ndarray, int]:
+    """Read audio that the stdlib wave module cannot decode as 16-bit PCM."""
     try:
         import soundfile as sf
     except ImportError as e:
         raise ImportError(
-            "soundfile is required to read non-WAV audio files. Install with: pip install soundfile"
+            "soundfile is required to read this audio file. Install with: pip install soundfile"
         ) from e
 
     data, sample_rate = sf.read(str(filepath), dtype="float32")
@@ -43,6 +30,28 @@ def audio_read(filepath: str | Path) -> tuple[np.ndarray, int]:
     else:
         wav = data.mean(axis=1)[None, :]
     return wav, sample_rate
+
+
+def audio_read(filepath: str | Path) -> tuple[np.ndarray, int]:
+    """Read audio. 16-bit WAV uses the stdlib; every other encoding uses soundfile."""
+    filepath = Path(filepath)
+
+    if filepath.suffix.lower() == ".wav":
+        try:
+            with wave.open(str(filepath), "rb") as wav_file:
+                if wav_file.getsampwidth() == 2:
+                    sample_rate = wav_file.getframerate()
+                    n_channels = wav_file.getnchannels()
+                    raw_data = wav_file.readframes(-1)
+                    # Normalize int16 PCM to float32 in [-1, 1].
+                    samples = np.frombuffer(raw_data, dtype=np.int16).astype(np.float32) / 32768.0
+                    if n_channels > 1:
+                        samples = samples.reshape(-1, n_channels).mean(axis=1)
+                    return samples[None, :], sample_rate
+        except wave.Error:
+            pass
+
+    return _read_with_soundfile(filepath)
 
 
 class StreamingWAVWriter:

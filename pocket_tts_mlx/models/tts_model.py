@@ -30,9 +30,13 @@ from pocket_tts_mlx.modules.stateful_module import increment_steps, init_states
 from pocket_tts_mlx.utils.config import Config, load_config
 from pocket_tts_mlx.utils.utils import display_execution_time, download_if_necessary, size_of_dict
 from pocket_tts_mlx.utils.weight_conversion import (
+    PREDEFINED_VOICE_NAMES,
     PREDEFINED_VOICES,
     get_flow_lm_state_dict_mlx,
     get_mimi_state_dict_mlx,
+    import_flow_state,
+    is_safetensors_source,
+    language_voice_state_url,
     load_predefined_voice_mlx,
     load_safetensors_to_numpy,
     load_weights_to_mlx_model,
@@ -102,6 +106,110 @@ def prepend_voice_bos(prompt: mx.array, bos: mx.array, insert: bool) -> mx.array
         return prompt
     return mx.concatenate([bos, prompt], axis=1)
 
+
+CONFIGS_DIR = Path(__file__).resolve().parents[1] / "config"
+
+
+def resolve_config_path(config: str | Path) -> Path:
+    """Map a stem or a yaml path to the file `load_model` will read."""
+    text = str(config)
+    if text.endswith(".yaml") or text.endswith(".yml"):
+        return Path(config)
+    return CONFIGS_DIR / f"{text}.yaml"
+
+
+def is_shipped_config(origin: Path | None) -> bool:
+    """True when the config file lives in this package's config directory."""
+    if origin is None:
+        return False
+    return Path(origin).resolve().is_relative_to(CONFIGS_DIR.resolve())
+
+
+def predefined_voice_source(origin: Path | None, name: str) -> str:
+    """Return a voice-state URL, or ``legacy`` for the b6369a24 audio-prompt catalog."""
+    if not is_shipped_config(origin):
+        raise ValueError(
+            "Cannot use predefined voices when the model "
+            "is not loaded from a config associated with a language. "
+            f"Here the origin is {origin}"
+        )
+    assert origin is not None
+    if origin.stem == "b6369a24":
+        if name not in PREDEFINED_VOICES:
+            raise ValueError(
+                f"Predefined voice {name!r} not found, available voices are {list(PREDEFINED_VOICES)}."
+            )
+        return "legacy"
+    if name not in PREDEFINED_VOICE_NAMES:
+        raise ValueError(
+            f"Predefined voice {name!r} not found, available voices are {list(PREDEFINED_VOICE_NAMES)}."
+        )
+    return language_voice_state_url(origin.stem, name)
+
+
+def _resolve_bundle_key(model: nn.Module, key: str):
+    parts = key.split(".")
+    if len(parts) < 2 or parts[-1].isdigit():
+        raise KeyError(key)
+    obj = model
+    for part in parts[:-1]:
+        if part.isdigit():
+            obj = obj[int(part)]
+        else:
+            obj = getattr(obj, part)
+    return obj, parts[-1]
+
+
+def _layout_bundle_weight(obj, param_name: str, value: mx.array) -> mx.array:
+    """Match the bundle walker conv layout: PyTorch `(out, in, k)` becomes MLX `(out, k, in)`."""
+    if param_name == "weight" and isinstance(obj, nn.Conv1d) and len(value.shape) == 3:
+        return mx.transpose(value, (0, 2, 1))
+    if (
+        param_name == "weight"
+        and (isinstance(obj, nn.ConvTranspose1d) or hasattr(obj, "is_conv_transpose"))
+        and len(value.shape) == 3
+    ):
+        if value.shape[1] == 1:
+            return mx.transpose(value, (0, 2, 1))
+        return mx.transpose(value, (1, 2, 0))
+    return value
+
+
+def assign_bundle_weights(model: nn.Module, weights: Dict[str, np.ndarray]) -> None:
+    """Place a fused bundle onto `model`. A skip is a failure."""
+    from mlx.utils import tree_flatten
+
+    transformed: Dict[str, mx.array] = {}
+    unplaceable: list[str] = []
+    for key, tensor in weights.items():
+        array = tensor
+        if getattr(array.dtype, "name", "") == "bfloat16":
+            array = array.astype("float32")
+        try:
+            obj, param_name = _resolve_bundle_key(model, key)
+            transformed[key] = _layout_bundle_weight(obj, param_name, mx.array(array))
+        except (KeyError, IndexError, AttributeError, TypeError):
+            unplaceable.append(key)
+    params = {name: value for name, value in tree_flatten(model.parameters())}
+    missing = sorted(set(params) - set(transformed))
+    unexpected = sorted(set(transformed) - set(params))
+    mismatched = sorted(
+        key
+        for key, value in transformed.items()
+        if key in params
+        and tuple(int(dim) for dim in value.shape) != tuple(int(dim) for dim in params[key].shape)
+    )
+    if unplaceable or missing or unexpected or mismatched:
+        raise ValueError(
+            "Bundle does not match the parameter tree: "
+            f"unplaceable={unplaceable}, missing={missing}, unexpected={unexpected}, "
+            f"shape_mismatch={mismatched}"
+        )
+    for key, value in transformed.items():
+        obj, param_name = _resolve_bundle_key(model, key)
+        setattr(obj, param_name, value)
+    logger.info("Loaded %d weights", len(transformed))
+
 VOICE_CLONING_UNSUPPORTED = (
     f"We could not download the weights for the model with voice cloning, "
     f"but you're trying to use voice cloning. "
@@ -137,6 +245,7 @@ class TTSModel(nn.Module):
         self.eos_threshold = eos_threshold
         self.config = config
         self.has_voice_cloning = True
+        self.origin: Path | None = None
 
     @property
     def device(self) -> str:
@@ -202,47 +311,7 @@ class TTSModel(nn.Module):
                 weights_file = download_if_necessary(config.weights_path_without_voice_cloning)
 
             weights = load_safetensors_to_numpy(weights_file)
-            loaded_count = 0
-            skipped_count = 0
-            for key, tensor in weights.items():
-                if getattr(tensor.dtype, "name", "") == "bfloat16":
-                    tensor = tensor.astype("float32")
-                mlx_array = mx.array(tensor)
-
-                # Resolve nested modules and assign parameters by name.
-                parts = key.split(".")
-                obj = tts_model
-                try:
-                    for part in parts[:-1]:
-                        if part.isdigit():
-                            obj = obj[int(part)]
-                        else:
-                            obj = getattr(obj, part)
-                    param_name = parts[-1]
-                    if param_name.isdigit():
-                        skipped_count += 1
-                        continue
-
-                    if param_name == "weight" and isinstance(obj, nn.Conv1d) and len(mlx_array.shape) == 3:
-                        # PyTorch Conv1d weight: (out, in, k) -> MLX: (out, k, in).
-                        mlx_array = mx.transpose(mlx_array, (0, 2, 1))
-                    elif param_name == "weight" and (
-                        isinstance(obj, nn.ConvTranspose1d) or hasattr(obj, "is_conv_transpose")
-                    ) and len(mlx_array.shape) == 3:
-                        # PyTorch ConvTranspose1d weight: (in, out, k)
-                        # MLX weight: (out, k, in/groups)
-                        if mlx_array.shape[1] == 1:
-                            mlx_array = mx.transpose(mlx_array, (0, 2, 1))
-                        else:
-                            mlx_array = mx.transpose(mlx_array, (1, 2, 0))
-
-                    setattr(obj, param_name, mlx_array)
-                    loaded_count += 1
-                except (KeyError, IndexError, AttributeError):
-                    skipped_count += 1
-                    continue
-
-            logger.info("Loaded %d weights, skipped %d", loaded_count, skipped_count)
+            assign_bundle_weights(tts_model, weights)
 
         if config.flow_lm.weights_path is None and config.weights_path is None:
             logger.warning("No weights_path specified, model is uninitialized!")
@@ -260,15 +329,13 @@ class TTSModel(nn.Module):
         eos_threshold: float = DEFAULT_EOS_THRESHOLD,
     ):
         """Create and load a configured TTSModel with weights."""
-        if str(config).endswith(".yaml"):
-            config_path = Path(config)
-            config = load_config(config_path)
-            logger.info("Loading model from config at %s...", config_path)
-        else:
-            config = load_config(Path(__file__).parents[1] / f"config/{config}.yaml")
+        config_path = resolve_config_path(config)
+        loaded = load_config(config_path)
+        logger.info("Loading model from config at %s...", config_path)
         tts_model = cls._from_pydantic_config_with_weights(
-            config, temp, lsd_decode_steps, noise_clamp, eos_threshold
+            loaded, temp, lsd_decode_steps, noise_clamp, eos_threshold
         )
+        tts_model.origin = config_path.resolve()
         return tts_model
 
     def _run_flow_lm_and_increment_step(
@@ -552,11 +619,28 @@ class TTSModel(nn.Module):
     ) -> Dict:
         return self.get_state_for_audio_prompt(audio_conditioning, truncate)
 
+    def _flow_state_modules(self) -> set[str]:
+        """Module names a voice state is allowed to fill."""
+        return set(init_states(self.flow_lm, batch_size=1, sequence_length=1))
+
     def get_state_for_audio_prompt(
         self, audio_conditioning: Union[Path, str, mx.array], truncate: bool = False
     ) -> Dict:
-        if isinstance(audio_conditioning, str) and audio_conditioning in PREDEFINED_VOICES:
-            prompt = load_predefined_voice_mlx(audio_conditioning)
+        if isinstance(audio_conditioning, (str, Path)) and is_safetensors_source(audio_conditioning):
+            source = audio_conditioning
+            if isinstance(source, str):
+                source = download_if_necessary(source)
+            return import_flow_state(source, self._flow_state_modules())
+
+        prompt = None
+        if isinstance(audio_conditioning, str) and audio_conditioning in PREDEFINED_VOICE_NAMES:
+            source = predefined_voice_source(self.origin, audio_conditioning)
+            if source == "legacy":
+                prompt = load_predefined_voice_mlx(audio_conditioning)
+            else:
+                return import_flow_state(
+                    download_if_necessary(source), self._flow_state_modules()
+                )
         else:
             if not self.has_voice_cloning and isinstance(audio_conditioning, (str, Path)):
                 raise ValueError(VOICE_CLONING_UNSUPPORTED)
