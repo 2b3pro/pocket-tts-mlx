@@ -6,7 +6,7 @@ updated: 2026-10-08
 tags: mlx, pocket-tts, inference
 type: feature
 issue_kind: track
-context: Plan 001 rev 2 passed two reviews. The owner asked to build. L0–L2 are done; later slices stay candidate.
+context: Plan 001 rev 2 passed two reviews. The owner asked to build. L0–L3 are done; later slices stay candidate.
 ---
 
 # Issue 001: Update the MLX runtime to current Pocket TTS inference
@@ -40,14 +40,14 @@ The track stays open until the slice ledger is implemented.
 
 ## Slice Ledger
 
-The owner authorized the build. L0–L2 are done. Later rows stay `candidate`. The track closes when the ledger is implemented.
+The owner authorized the build. L0–L3 are done. Later rows stay `candidate`. The track closes when the ledger is implemented.
 
 | Slice | Status | Ref | Queue | Closure gate |
 | --- | --- | --- | --- | --- |
 | Test scaffold and local env | done | plan 001 L0 | | `pytest -q` in repo `.venv` |
 | Config schema and language YAMLs | done | plan 001 L1 | | YAML parse test |
 | Flow head, sampler, tanh GELU | done | plan 001 L2 | | Unit test, no weights |
-| Mimi inner/outer dims and latent layout | candidate | plan 001 L3 | | Shape test plus old YAML still builds |
+| Mimi inner/outer dims and latent layout | done | plan 001 L3 | | Shape test plus old YAML still builds |
 | Tokenizer and text chunking | candidate | plan 001 L4 | | Unit test, no weights |
 | EOS, fade, end-on-pause | candidate | plan 001 L5 | | Unit test, no weights |
 | Strict bundle load and voice-state import | candidate | plan 001 L6 | | Strict load, then short clips |

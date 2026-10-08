@@ -23,10 +23,7 @@ from pocket_tts_mlx.default_parameters import (
     MAX_TOKEN_PER_CHUNK,
 )
 from pocket_tts_mlx.models.flow_lm import FlowLMModel
-from pocket_tts_mlx.models.mimi import MimiModel
-from pocket_tts_mlx.modules.dummy_quantizer import DummyQuantizer
-from pocket_tts_mlx.modules.mimi_transformer import ProjectedTransformer
-from pocket_tts_mlx.modules.seanet import SEANetDecoder, SEANetEncoder
+from pocket_tts_mlx.models.mimi import build_mimi
 from pocket_tts_mlx.modules.stateful_module import increment_steps, init_states
 from pocket_tts_mlx.utils.config import Config, load_config
 from pocket_tts_mlx.utils.utils import display_execution_time, download_if_necessary, size_of_dict
@@ -40,6 +37,14 @@ from pocket_tts_mlx.utils.weight_conversion import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def speaker_proj_shape(config: Config) -> tuple[int, int]:
+    """Map the codec bottleneck onto the flow transformer width."""
+    return (
+        config.flow_lm.transformer.d_model,
+        config.mimi.inner_dim or config.mimi.seanet.dimension,
+    )
 
 VOICE_CLONING_UNSUPPORTED = (
     f"We could not download the weights for the model with voice cloning, "
@@ -94,13 +99,22 @@ class TTSModel(nn.Module):
         return cls(flow_lm, temp, lsd_decode_steps, noise_clamp, eos_threshold, config)
 
     @classmethod
+    def _assemble(
+        cls, config: Config, temp: float, lsd_decode_steps: int, noise_clamp: Optional[float], eos_threshold
+    ):
+        """Build FlowLM, the speaker projection, and Mimi without loading weights."""
+        tts_model = cls._from_pydantic_config(config, temp, lsd_decode_steps, noise_clamp, eos_threshold)
+        tts_model.flow_lm.speaker_proj_weight = mx.zeros(
+            speaker_proj_shape(config), dtype=mx.float32
+        )
+        tts_model.mimi = build_mimi(config.mimi)
+        return tts_model
+
+    @classmethod
     def _from_pydantic_config_with_weights(
         cls, config: Config, temp: float, lsd_decode_steps: int, noise_clamp: Optional[float], eos_threshold
     ):
-        tts_model = cls._from_pydantic_config(config, temp, lsd_decode_steps, noise_clamp, eos_threshold)
-
-        # Initialize speaker projection weight for audio conditioning.
-        tts_model.flow_lm.speaker_proj_weight = mx.zeros((1024, 512), dtype=mx.float32)
+        tts_model = cls._assemble(config, temp, lsd_decode_steps, noise_clamp, eos_threshold)
 
         if config.flow_lm.weights_path is not None:
             if config.mimi.weights_path is None:
@@ -112,26 +126,6 @@ class TTSModel(nn.Module):
                 download_if_necessary(config.flow_lm.weights_path)
             )
             load_weights_to_mlx_model(tts_model.flow_lm, state_dict_flowlm, strict=True)
-
-        # Build Mimi components from configuration.
-        mimi_config = config.mimi.model_dump()
-        encoder = SEANetEncoder(**mimi_config["seanet"])
-        decoder = SEANetDecoder(**mimi_config["seanet"])
-        encoder_transformer = ProjectedTransformer(**mimi_config["transformer"])
-        decoder_transformer = ProjectedTransformer(**mimi_config["transformer"])
-        quantizer = DummyQuantizer(**mimi_config["quantizer"])
-
-        tts_model.mimi = MimiModel(
-            encoder,
-            decoder,
-            quantizer,
-            channels=mimi_config["channels"],
-            sample_rate=mimi_config["sample_rate"],
-            frame_rate=mimi_config["frame_rate"],
-            encoder_frame_rate=mimi_config["sample_rate"] / encoder.hop_length,
-            encoder_transformer=encoder_transformer,
-            decoder_transformer=decoder_transformer,
-        )
 
         if config.mimi.weights_path is not None:
             if config.flow_lm.weights_path is None:
@@ -271,7 +265,7 @@ class TTSModel(nn.Module):
     def _encode_audio(self, audio: mx.array) -> mx.array:
         """Encode conditioning audio into FlowLM-compatible embeddings."""
         encoded = self.mimi.encode_to_latent(audio)
-        latents = mx.transpose(encoded, (-1, -2)).astype(mx.float32)
+        latents = encoded.astype(mx.float32)
         conditioning = mx.matmul(latents, self.flow_lm.speaker_proj_weight.T)
         return conditioning
 
@@ -411,11 +405,9 @@ class TTSModel(nn.Module):
                 if eos_step is not None and generation_step >= eos_step + frames_after_eos:
                     break
 
-                # Decode latent frame into audio via Mimi.
+                # Decode latent frame into audio via Mimi. The codec quantizes.
                 mimi_decoding_input = next_latent * self.flow_lm.emb_std + self.flow_lm.emb_mean
-                transposed = mx.transpose(mimi_decoding_input, (0, 2, 1))
-                quantized = self.mimi.quantizer(transposed)
-                audio_frame = self.mimi.decode_from_latent(quantized, mimi_state)
+                audio_frame = self.mimi.decode_from_latent(mimi_decoding_input, mimi_state)
                 increment_steps(self.mimi, mimi_state, increment=16)
                 audio_chunk = audio_frame[0, 0]
                 # Force eager execution per chunk for honest timing and smoother streaming.
@@ -469,9 +461,7 @@ class TTSModel(nn.Module):
         zero_latent = mx.zeros((1, 1, self.flow_lm.ldim), dtype=self.flow_lm.dtype)
         for _ in range(warmup_frames):
             mimi_decoding_input = zero_latent * self.flow_lm.emb_std + self.flow_lm.emb_mean
-            transposed = mx.transpose(mimi_decoding_input, (0, 2, 1))
-            quantized = self.mimi.quantizer(transposed)
-            audio_frame = self.mimi.decode_from_latent(quantized, mimi_state)
+            audio_frame = self.mimi.decode_from_latent(mimi_decoding_input, mimi_state)
             mx.eval(audio_frame)
             increment_steps(self.mimi, mimi_state, increment=16)
 
