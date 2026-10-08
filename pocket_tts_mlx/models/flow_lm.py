@@ -28,6 +28,22 @@ def lsd_decode(v_t, x_0: mx.array, num_steps: int = 1) -> mx.array:
     return current
 
 
+def drifting_decode(v_t, x_0: mx.array, num_steps: int = 1) -> mx.array:
+    """One-step head with no time input: the sample is the head's output."""
+    del num_steps
+    return v_t(x_0)
+
+
+def ot_decode(v_t, x_0: mx.array, num_steps: int = 16) -> mx.array:
+    """Euler integration of a one-time-condition flow."""
+    current = x_0
+    for i in range(num_steps):
+        t = i / num_steps
+        t_tensor = mx.full((current.shape[0], 1), t)
+        current = current + v_t(t_tensor, current) / num_steps
+    return current
+
+
 class FlowLMModel(nn.Module):
     """Flow language model with transformer backbone and flow MLP."""
     def __init__(
@@ -40,8 +56,11 @@ class FlowLMModel(nn.Module):
         stats_ema_decay: float = 0.999,
         text_padding_weight: float = 1.0,
         dtype=None,
+        insert_bos_before_voice: bool = False,
+        flow_type: str = "lsd",
     ):
         super().__init__()
+        self.flow_type = flow_type
         self.conditioner = conditioner
         self.ldim = ldim
         self.stats_ema_decay = stats_ema_decay
@@ -53,6 +72,9 @@ class FlowLMModel(nn.Module):
         self.emb_std = mx.ones((ldim,), dtype=dtype)
         self.emb_mean = mx.zeros((ldim,), dtype=dtype)
         self.bos_emb = mx.random.normal(shape=(ldim,)).astype(dtype)
+        self.insert_bos_before_voice = insert_bos_before_voice
+        if self.insert_bos_before_voice:
+            self.bos_before_voice = mx.random.normal(shape=(1, 1, dim)).astype(dtype)
 
         self.input_linear = nn.Linear(ldim, dim, bias=False)
         self.transformer = transformer
@@ -77,6 +99,8 @@ class FlowLMModel(nn.Module):
             conditioner=conditioner,
             ldim=latent_dim,
             dtype=getattr(mx, config.dtype),
+            insert_bos_before_voice=config.insert_bos_before_voice,
+            flow_type=config.flow.type,
         )
 
     def __call__(
@@ -110,7 +134,15 @@ class FlowLMModel(nn.Module):
 
         # Condition flow MLP on transformer output.
         conditioned_flow = partial(self.flow_net, transformer_out)
-        output = lsd_decode(conditioned_flow, noise, lsd_decode_steps)
+        if self.flow_type == "lsd":
+            decode = lsd_decode
+        elif self.flow_type == "flow_matching":
+            decode = ot_decode
+        elif self.flow_type == "drifting":
+            decode = drifting_decode
+        else:
+            raise ValueError(f"Unknown flow type: {self.flow_type}")
+        output = decode(conditioned_flow, noise, lsd_decode_steps)
         return output, is_eos
 
     def backbone(self, input_: mx.array, text_embeddings: mx.array, sequence: mx.array, model_state: Dict):

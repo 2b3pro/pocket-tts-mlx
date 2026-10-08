@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import NamedTuple
 
 import mlx.core as mx
@@ -12,6 +13,15 @@ from pocket_tts_mlx.modules.layer_scale import LayerScale
 from pocket_tts_mlx.modules.rope import RotaryEmbedding
 from pocket_tts_mlx.modules.stateful_module import StatefulModule
 from pocket_tts_mlx.utils.config import FlowLMTransformerConfig
+
+# PyTorch F.gelu(..., approximate="tanh"). Written out so older mlx builds,
+# allowed by the mlx>=0.20 floor, do not need nn.gelu_approx.
+_TANH_GELU_SCALE = math.sqrt(2.0 / math.pi)
+
+
+def tanh_gelu(x: mx.array) -> mx.array:
+    """Tanh approximation of GELU."""
+    return 0.5 * x * (1.0 + mx.tanh(_TANH_GELU_SCALE * (x + 0.044715 * x**3)))
 
 
 class StreamingTransformerLayer(nn.Module):
@@ -53,7 +63,7 @@ class StreamingTransformerLayer(nn.Module):
         """Feed-forward block with pre-norm and residual."""
         x_orig = x
         x = self.norm2(x)
-        update = self.linear2(nn.gelu(self.linear1(x)))
+        update = self.linear2(tanh_gelu(self.linear1(x)))
         return x_orig + self.layer_scale_2(update)
 
     def _sa_block(self, x: mx.array, model_state: dict | None) -> mx.array:
