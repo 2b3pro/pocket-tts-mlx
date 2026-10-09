@@ -1,5 +1,5 @@
 ---
-updated_at: "09 Oct 2026 | 10:47 AM IST"
+updated_at: "09 Oct 2026 | 08:02 PM +08"
 ---
 
 # Koder State
@@ -8,39 +8,43 @@ updated_at: "09 Oct 2026 | 10:47 AM IST"
 
 - v0.2.1 (`b1fe6a4`) is the published MLX port. PyPI `0.2.1`; remote tag `v0.2.1` → `1342d4d`.
 - Koder scaffold: `0d1e841`. `CHANGELOG.md` stays the history surface.
-- `d37c30b`: analysis 001, issue 001 (track), plan 001 rev 2, reviews 01 and 02. Upstream read at `41cbc84`.
-- `59d499f` L0 through `dcb7c0a` L8: plan 001 is fully built. Version `0.3.0` comes from `pocket_tts_mlx.__version__`. `MANIFEST.in` keeps `tests/` and `koder/` out of the sdist.
-- `87bcf29`: build review `koder/reviews/001_update_pocket_tts_mlx/03_build_review.md`, `approve with fixes` (0 P1, 2 P2, 5 P3). Evidence:
-  - temperature-0 parity with upstream torch: same lengths, corr ≥ 0.999;
-  - all 20 configs strictly match their published headers;
-  - all 513 voice files (27 names × 19 stems) exist;
-  - wheel and sdist contents are correct.
-- Samples for all 7 languages, drifting English and `b6369a24` were generated and the owner listened. Mostly good, but German and Dutch are quiet and French is unclear. Filed as `koder/issues/002_quiet_or_unclear_non_english_speech/INDEX.md`.
+- Plan 001 (L0–L7) built `0.3.0` against upstream `41cbc84`. Build review `koder/reviews/001_update_pocket_tts_mlx/03_build_review.md` is `approve with fixes`.
+- 9 Oct 2026: the owner held the `0.3.0` release for issue 002. Plan 001 L8 and the issue 001 ledger say "on hold".
+- Plan 002 (`koder/plans/002_fix_quiet_or_unclear_non_english_speech/INDEX.md`, rev 2), recorded in `1c4c3e7`:
+  - No port bug. At temperature 0 the port matches upstream `41cbc84`: German corr 0.99856, Dutch 0.99743, French 0.99970, with the same lengths and levels.
+  - PyPI `pocket-tts` 3.3.0 is older than `41cbc84` and ships older non-English models. It is not a parity reference.
+  - The level follows the voice. `juergen` and `daan` are quiet in every language. `estelle` is loud, so French's problem is clarity, which equals upstream.
+- `4fb173a`: opt-in loudness normalization, as the owner chose. Default voices are kept and 24-layer is skipped.
+  - `generate_audio(normalize=False)` and the CLI `--normalize` flag aim for −18 dBFS active RMS with a −1 dBFS limiter. The stream is not normalized.
+  - With the flag: German −31.2 → −18.3, Dutch −25.9 → −18.1. On long text the limiter touches 1–2% of samples, cutting at most 4.8 dB.
+  - The same commit fixes review 03 P2-2 (the full changelog) and P3-1 (absolute README links).
 
 ## Present
 
-- Ledger `koder/issues/001_update_to_current_pocket_tts/INDEX.md`: L0–L8 `done`. Version `0.3.0` is not tagged, not pushed, and not on PyPI.
-- Issue 002 (P2, open): measured active RMS vs English is German −12.0 dB and Dutch −7.1 dB. French is at normal level, so its problem is clarity. French matches upstream at temperature 0; German and Dutch are not parity-checked yet.
-- Release blockers from review 03, still open:
-  - P2-1: tag the final commit, not `d2d8f44`, because an sdist from that commit would include `tests/` and `koder/`;
-  - P2-2: `CHANGELOG.md` lacks the Python `warmup_frames` 1 → 0 break, strict-load errors, the `tokenizers` dependency, and a `### Fixed` section.
-- Optional P3 items:
-  - absolute CHANGELOG links in the README;
-  - a parity test plus `dev` extra `pocket-tts>=3.3.0`;
-  - a completeness check in `import_flow_state`;
-  - the setuptools license format (deadline 2027-02-18);
-  - "Current release" in `koder/AGENTS.md`, to update after publish.
-- Untested: cloning from your own audio with the gated `kyutai/pocket-tts` weights (needs `hf auth login`).
-- Validation: `.venv/bin/python -m pytest -q` → 64 passed. Scratch gate clean. `git diff --check` clean.
-- Disk:
-  - test scratch, the `/tmp/pocket-tts-upstream` clone, `dist/`, `egg-info`, and caches are deleted;
-  - still kept: `../samples/` (2.3 MB, needed for issue 002), `.venv` (449 MB), and the HF cache `~/.cache/huggingface/hub/models--kyutai--pocket-tts-without-voice-cloning` (~237 MB on disk).
-- Local `main` is 21 commits ahead of `origin/main` after this close. Nothing pushed.
+- Issue 002 (P2, open) and issue 001 (open, L8 on hold). `0.3.0` is not tagged, pushed, or published. The owner will not release yet.
+- Validation:
+  - `.venv/bin/python -m pytest -q` → 70 passed;
+  - an offline smoke of all 9 shipped stems with `normalize=True` passes;
+  - scratch gate clean; `git diff --check` clean.
+- Kept for the owner's review, all outside the repo:
+  - `../samples/issue002/`: A/B pairs `*_t0.wav` against `*_t0_normalized.wav`, `long_*` plain against normalized, 7-voice sets, and `sweep_all_voices/`;
+  - `../samples/*.wav`: the original 0.3.0 samples;
+  - `../parity/` (914 MB): upstream torch venv at `41cbc84` plus scripts, with `README.txt` for use and rebuild;
+  - `.venv` and the HF cache `~/.cache/huggingface/hub/models--kyutai--pocket-tts-without-voice-cloning`. It holds every model the port loads plus 12 voices × de/nl/fr at `1e08e6a`.
+- Deleted: 676 MB of stale old-revision cache files (old German/Dutch/French models and voices from PyPI 3.3.0), after checking that nothing else referenced them.
+- Local `main` is ahead of `origin/main` (24 commits after this close). Nothing pushed.
 
 ## Future
 
-- Next action: investigate issue 002. Start with temperature-0 parity for `german`/`juergen` and `dutch`/`daan` against upstream torch, then try other voices, temperatures, and the 24-layer variants. The owner then picks a fix.
-- Then fix P2-2 (changelog) and the README links, run pytest, and tag the final commit as `v0.3.0` (owner-gated).
-- Owner decisions: the fix for issue 002; push, tag, and PyPI publish; delete `samples/` and the HF cache once issue 002 is settled.
-- Use `.venv` only. `a separate kyutai venv` imports a different checkout.
-- Run pytest and any other MLX import with the sandbox disabled. Skip the sandboxed run.
+- Next action (owner):
+  - listen to `../samples/issue002/`. Compare `*_t0` with `*_t0_normalized` and `long_*` with `long_*_normalized` for pumping, dulling, or clicks. Judge French clarity too;
+  - choose review 03 P3-2. Recommended: drop the README "parity tests" sentence and the `pocket-tts` pin in `dev`, and keep the harness note under `koder/`. Or add a skip-guarded `tests/test_parity.py`.
+- After the owner signs off:
+  - apply P3-2;
+  - close issue 002;
+  - set the `CHANGELOG.md` date;
+  - rerun every plan 001 L8 check on the final commit (build, `twine check`, 20 YAMLs, no `tests/`/`koder/` in the dists, fresh-venv CLI smoke).
+  - Tag, push, and PyPI publish only when the owner asks.
+- Optional, unscheduled: review 03 P3-3, P3-4 (license format, deadline 2027-02-18), P3-5 (AGENTS.md "Current release" after publish). Cloning from your own audio is untested.
+- Delete `../parity/` and the sweep voices once issue 002 and P3-2 are settled.
+- Use `.venv` only. `a separate kyutai venv` imports a different checkout. Run pytest and any MLX import with the sandbox disabled.
