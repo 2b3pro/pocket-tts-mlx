@@ -8,6 +8,8 @@
 - Drifting, flow-matching, and LSD samplers. `tokenizer.json` for current models. SentencePiece remains for `b6369a24`.
 - Per-language built-in voices. The CLI default is `alba`, `estelle`, `giovanni`, `juergen`, `lola`, `rafael`, or `daan`.
 - `--language`, `--config`, and `--temperature`. Text `-` reads stdin. `sampler_decode_steps` replaces `lsd_decode_steps`, which still works as a deprecated alias.
+- Voice-state `.safetensors` files load as voices from a local path, `hf://`, or an http(s) URL.
+- Opt-in loudness normalization: `generate_audio(..., normalize=True)` and `--normalize` scale speech to about -18 dBFS with peaks under -1 dBFS. Off by default. `juergen` and `daan` speak 6 to 9 dB quieter than the other defaults, in upstream as well.
 
 ### Changed
 
@@ -15,7 +17,18 @@
 - Every model, including `b6369a24`, uses tanh GELU in the backbone FFN.
 - The CLI voice is no longer `marius`.
 - `--max-tokens` defaults to 50, down from 500. `--frames-after-eos` is unset, down from 7. `--warmup-frames` defaults to 0, down from 1.
+- `generate_audio` and `generate_audio_stream` default `warmup_frames` to 0, down from 1.
+- Loading raises on a weight bundle with missing, extra, or wrongly shaped tensors. v0.2.1 skipped them silently.
+- New runtime dependency: `tokenizers>=0.21`.
 - Text prompts follow each config's flags: capitalization, terminal punctuation, short-input padding, semicolon removal, and character replacements.
+
+### Fixed
+
+- EOS is ignored before frame 6.
+- Each chunk fades in over its first 5 ms.
+- Cloned voice prompts end on a short pause.
+- Non-16-bit WAV prompts load through soundfile.
+- Generation uses the prepared chunk text, not the raw chunk.
 
 ## v0.2.1 - 2026-02-11
 

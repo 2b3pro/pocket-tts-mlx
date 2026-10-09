@@ -3,11 +3,14 @@
 import io
 import subprocess
 import sys
+from types import SimpleNamespace
 
+import mlx.core as mx
 import pytest
 
 from pocket_tts_mlx import __version__
 from pocket_tts_mlx.default_parameters import ALBA_SOURCE_WAV, get_default_voice_for_language
+import pocket_tts_mlx.main as cli
 from pocket_tts_mlx.main import cli_voice, read_cli_text
 from pocket_tts_mlx.models.tts_model import (
     resolve_sampler_steps,
@@ -77,6 +80,28 @@ def test_help_shows_the_new_flags():
         text=True,
     )
     assert result.returncode == 0
-    for flag in ("--language", "--config", "--temperature", "--warmup-frames", "--frames-after-eos"):
+    for flag in ("--language", "--config", "--temperature", "--warmup-frames", "--frames-after-eos", "--normalize"):
         assert flag in result.stdout
     assert "default: 50" in result.stdout or "Max tokens" in result.stdout
+
+
+def test_cli_passes_normalize_to_generate_audio(monkeypatch, tmp_path):
+    seen = []
+
+    class FakeModel:
+        config = SimpleNamespace(mimi=SimpleNamespace(sample_rate=24_000))
+
+        def get_state_for_audio_prompt(self, voice):
+            return {}
+
+        def generate_audio(self, **kwargs):
+            seen.append(kwargs["normalize"])
+            return mx.zeros((2_400,))
+
+    monkeypatch.setattr(cli, "TTSModel", SimpleNamespace(load_model=lambda **kwargs: FakeModel()))
+    for extra in ([], ["--normalize"]):
+        out = tmp_path / f"out{len(seen)}.wav"
+        monkeypatch.setattr(sys, "argv", ["pocket-tts-mlx", "--language", "german", "-o", str(out), *extra, "Hallo."])
+        assert cli.main() == 0
+        assert out.exists()
+    assert seen == [False, True]

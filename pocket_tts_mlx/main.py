@@ -110,6 +110,11 @@ def main() -> int:
         default=0,
         help="Number of initial Mimi frames to decode and discard",
     )
+    parser.add_argument(
+        "--normalize",
+        action="store_true",
+        help="Scale the output to about -18 dBFS speech level, peaks under -1 dBFS. Off by default.",
+    )
     parser.add_argument("--verbose", "-V", action="store_true", help="Verbose logging")
 
     args = parser.parse_args()
@@ -148,6 +153,7 @@ def main() -> int:
             trim_start_ms=args.trim_start_ms,
             fade_in_ms=args.fade_in_ms,
             warmup_frames=args.warmup_frames,
+            normalize=args.normalize,
         )
 
         out_path = Path(args.output)

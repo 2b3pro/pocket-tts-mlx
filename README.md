@@ -10,7 +10,8 @@ Runtime is torch-free. Torch is only required for optional parity tests.
 - Shipped languages include french, german, dutch, italian, portuguese, and spanish, plus 24-layer previews and a drifting English sampler.
 - Current models use `tokenizer.json`. `b6369a24` still uses SentencePiece.
 - Built-in voices follow the language. `--language french` uses `estelle`.
-- Release notes: [v0.3.0](CHANGELOG.md).
+- Opt-in `--normalize` raises quiet voices to a common level.
+- Release notes: [v0.3.0](https://github.com/jishnuvenugopal/pocket-tts-mlx/blob/main/CHANGELOG.md).
 
 **Installation**
 
@@ -68,6 +69,14 @@ The default voice follows the language:
 
 Other built-in names (`marius`, `javert`, `jean`, and the rest of the upstream catalog) work with a model loaded from a shipped config. `b6369a24` keeps its original eight voices as audio prompts. A config from outside this package does not accept those names; pass an audio file instead.
 
+**Loudness**
+
+Output level depends on the voice. `juergen` (german) and `daan` (dutch) come out 6 to 9 dB quieter than `alba` or `estelle`, in upstream Pocket TTS as well. `--normalize`, or `generate_audio(..., normalize=True)`, scales speech to about -18 dBFS and holds peaks under -1 dBFS. It is off by default, so output matches upstream unless you ask. `generate_audio_stream` does not normalize.
+
+```bash
+pocket-tts-mlx --language german --normalize -o hallo.wav "Guten Morgen."
+```
+
 **Onset options**
 
 `--warmup-frames`, `--trim-start-ms`, and `--fade-in-ms` still trim or fade the start of the file. They default to 0. Each chunk also fades its first 5 ms on its own.
@@ -86,5 +95,5 @@ Other built-in names (`marius`, `javert`, `jean`, and the rest of the upstream c
 
 **Release Notes**
 
-- Latest: [v0.3.0](CHANGELOG.md)
+- Latest: [v0.3.0](https://github.com/jishnuvenugopal/pocket-tts-mlx/blob/main/CHANGELOG.md)
 - Previous package: [PyPI 0.2.1](https://pypi.org/project/pocket-tts-mlx/0.2.1/)

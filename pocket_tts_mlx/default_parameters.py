@@ -10,6 +10,10 @@ DEFAULT_NOISE_CLAMP = None
 DEFAULT_EOS_THRESHOLD = -4.0
 DEFAULT_FRAMES_AFTER_EOS = None
 MAX_TOKEN_PER_CHUNK = 50
+# Opt-in output normalization (`normalize=True`, `--normalize`). Upstream has none,
+# so it stays off by default; some built-in voices (juergen, daan) speak 6-9 dB quieter.
+NORMALIZE_TARGET_DBFS = -18.0
+NORMALIZE_PEAK_DBFS = -1.0
 
 # Source recording behind the alba voice. Custom configs cannot use a precomputed
 # state, so the CLI clones this file instead.
