@@ -6,7 +6,7 @@ type: implementation
 status: approved
 revision: 2
 created: 2026-10-08
-updated: 2026-10-08
+updated: 2026-10-09
 ---
 
 # Plan 001: Update pocket-tts-mlx to current Pocket TTS inference
@@ -167,6 +167,8 @@ Header-only reads, no weight download:
 - Proof: `--help` shows the new flags; `pocket-tts-mlx --language english -o <tmp>.wav "Hello from MLX."` writes a wav; `python -c "import pocket_tts_mlx; print(pocket_tts_mlx.__version__)"` matches the built metadata.
 
 ### L8: Release preparation (owner-gated)
+
+**On hold (owner, 9 Oct 2026).** Do not tag, push, or publish `0.3.0` until issue 002 is settled. Plan 002 (`koder/plans/002_fix_quiet_or_unclear_non_english_speech/INDEX.md`) runs first. Its S5 fixes review 03 P2-2 and P3-1 and then resumes this layer. Rerun every L8 check on the final commit, because the review 03 wheel check came before plan 002's code and doc changes.
 
 - In a clean repo-local venv:
   - `python -m build`;

@@ -1,12 +1,12 @@
 ---
-status: done
+status: open
 priority: P1
 created: 2026-10-08
-updated: 2026-10-08
+updated: 2026-10-09
 tags: mlx, pocket-tts, inference
 type: feature
 issue_kind: track
-context: Plan 001 rev 2 passed two reviews. The owner asked to build. L0–L8 are done. Tag, push, and PyPI stay with the owner.
+context: Plan 001 rev 2 passed two reviews. The owner asked to build. L0–L7 are done. L8 is on hold for issue 002 (plan 002). Tag, push, and PyPI stay with the owner.
 ---
 
 # Issue 001: Update the MLX runtime to current Pocket TTS inference
@@ -36,11 +36,11 @@ Follow `koder/plans/001_update_pocket_tts_mlx/INDEX.md` only after its review ve
 - [x] A second review checked the plan against published weight and voice headers. Its fixes are applied.
 - [x] No `pocket_tts_mlx/` edit was made to reach that verdict.
 
-The slice ledger is implemented. Tag, push, and PyPI publish remain owner decisions.
+L0–L7 are implemented. L8 is on hold until plan 002 S5. Tag, push, and PyPI publish remain owner decisions.
 
 ## Slice Ledger
 
-The owner authorized the build. L0–L8 are done. Tag, push, and PyPI were not part of this build.
+The owner authorized the build. L0–L7 are done. L8 is on hold: on 9 Oct 2026 the owner held the `0.3.0` release for issue 002, and plan 002 changed product code, `CHANGELOG.md`, and `README.md` after the review 03 wheel check. Rerun L8 on the final commit after plan 002 S5. Tag, push, and PyPI are not part of this build.
 
 | Slice | Status | Ref | Queue | Closure gate |
 | --- | --- | --- | --- | --- |
@@ -52,4 +52,4 @@ The owner authorized the build. L0–L8 are done. Tag, push, and PyPI were not p
 | EOS, fade, end-on-pause | done | plan 001 L5 | | Unit test, no weights |
 | Strict bundle load and voice-state import | done | plan 001 L6 | | Strict load, then short clips |
 | API, CLI, docs, version | done | plan 001 L7 | | CLI help and a wav |
-| Release preparation (owner-gated) | done | plan 001 L8 | | Wheel check and fresh-venv smoke |
+| Release preparation (owner-gated) | on hold | plan 001 L8, plan 002 S5 | | Rerun the wheel check and fresh-venv smoke on the final commit |
