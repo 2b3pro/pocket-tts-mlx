@@ -1,6 +1,6 @@
-# DRAFT, not sent: upstream report for kyutai-labs/pocket-tts
+# Upstream report (posted 16 Oct 2026 as kyutai-labs/pocket-tts#372) for kyutai-labs/pocket-tts
 
-Status: drafted 16 Oct 2026 from issue 002. Do not post without the owner's go-ahead.
+Status: posted.
 Suggested title: `french` voice `estelle` is about 10 dB darker than the other voices above 2 kHz
 
 ## Summary

@@ -27,6 +27,7 @@ updated_at: "16 Oct 2026 | 04:30 PM +08"
 
 ## Future
 
+- Upstream estelle report posted as kyutai-labs/pocket-tts#372 (16 Oct 2026). Watch for replies.
 - Next action (owner): optionally create a GitHub release from `v0.3.0`; delete `backup-prerewrite`.
 - Upstream `estelle` report: re-run the repro against current upstream `main`, check for an existing issue, then send it if wanted (draft is in `koder/docs/`).
 - Optional, unscheduled: review 03 P3-3, P3-4 (license format, deadline 2027-02-18), P3-5 (AGENTS.md "Current release" after publish). Cloning from your own audio is untested.
