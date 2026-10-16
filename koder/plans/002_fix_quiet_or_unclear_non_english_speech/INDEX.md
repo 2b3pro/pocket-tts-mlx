@@ -32,7 +32,7 @@ German, Dutch, and French speech from `pocket-tts-mlx` 0.3.0 is as loud and clea
 
 ### S0: Upstream parity harness (scratch)
 
-- Make a scratch venv outside the repo with torch and upstream installed from git at `41cbc84`. PyPI `pocket-tts==3.3.0` is older than `41cbc84` and loads older non-English weights and voices. Do not use `a separate kyutai venv`; it has `pocket-tts` 1.0.3.
+- Make a scratch venv outside the repo with torch and upstream installed from git at `41cbc84`. PyPI `pocket-tts==3.3.0` is older than `41cbc84` and loads older non-English weights and voices. Do not use `a separate `kyutai` venv outside the repo`; it has `pocket-tts` 1.0.3.
 - Write a short script: the same text, voice, and model at temperature 0 in both, then compare length, correlation, SNR, peak, and active RMS (20 ms frames above 10% of the loudest).
 - Proof: `english`/`alba` reproduces review 03 (same length, corr ≈ 0.999).
 - **Done 9 Oct:** corr 0.99860, same length.

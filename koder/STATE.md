@@ -32,4 +32,4 @@ updated_at: "16 Oct 2026 | 04:30 PM +08"
 - Upstream `estelle` report: re-run the repro against current upstream `main`, check for an existing issue, then send it if wanted (draft is in `koder/docs/`).
 - Optional, unscheduled: review 03 P3-3, P3-4 (license format, deadline 2027-02-18), P3-5 (AGENTS.md "Current release" after publish). Cloning from your own audio is untested.
 - Delete `../parity/` and the sweep voices whenever the owner is done with them.
-- Use `.venv` only. `a separate kyutai venv` imports a different checkout. Run pytest and any MLX import with the sandbox disabled.
+- Use `.venv` only. `a separate `kyutai` venv outside the repo` imports a different checkout. Run pytest and any MLX import with the sandbox disabled.

@@ -38,7 +38,7 @@ No `pocket_tts_mlx/` file was edited.
 | Upstream `2dd548a` (2026-09-01) | Switches backbone FFN to `F.gelu(..., approximate="tanh")`. The commit says the released English weights were trained with tanh, so the change is a correctness fix for all models, `b6369a24` included. |
 | MLX `nn.gelu_approx` (mlx 0.30.4) | It is the tanh formula. The package floor is `mlx>=0.20.0`. |
 | PyPI | Latest `0.2.1` (`0.2.0`, `0.2.1` published). Remote tag `v0.2.1` → `1342d4d`. The README follow-up `b1fe6a4` came after the tag. |
-| Local envs | `a separate kyutai venv` has an editable `pocket_tts_mlx 0.1.0` that points at a **different checkout** `a checkout outside this repo` (`40530b3`, not in this history). |
+| Local envs | A separate `kyutai` venv outside the repo has an editable `pocket_tts_mlx 0.1.0` that points at a **different checkout** `a checkout outside this repo` (`40530b3`, not in this history). |
 
 ## Findings
 
@@ -100,7 +100,7 @@ The plan still says the parent issue is `issue_kind: mapping`; it is now a `trac
 
 ### P3-3: Local environment can test the wrong checkout
 
-The editable install in `a separate kyutai venv` imports a different checkout. Use a repo-local `.venv` (already gitignored) for tests and release builds. The repo folder is named `Untitled/`. Renaming it is cosmetic and up to the owner; do not rename it mid-build.
+The editable install in a separate `kyutai` venv outside the repo imports a different checkout. Use a repo-local `.venv` (already gitignored) for tests and release builds. The repo folder is named `Untitled/`. Renaming it is cosmetic and up to the owner; do not rename it mid-build.
 
 ### P3-4: Unchecked residuals
 
