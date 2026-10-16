@@ -6,7 +6,7 @@ updated: 2026-10-09
 tags: mlx, pocket-tts, inference
 type: feature
 issue_kind: track
-context: Plan 001 rev 2 passed two reviews. The owner asked to build. L0–L7 are done. L8 is on hold for issue 002 (plan 002). Tag, push, and PyPI stay with the owner.
+context: Plan 001 rev 2 passed two reviews. The owner asked to build. L0–L7 are done. L8 checks passed on the final commit (16 Oct 2026); release awaits the owner. Tag, push, and PyPI stay with the owner.
 ---
 
 # Issue 001: Update the MLX runtime to current Pocket TTS inference
@@ -36,7 +36,7 @@ Follow `koder/plans/001_update_pocket_tts_mlx/INDEX.md` only after its review ve
 - [x] A second review checked the plan against published weight and voice headers. Its fixes are applied.
 - [x] No `pocket_tts_mlx/` edit was made to reach that verdict.
 
-L0–L7 are implemented. L8 is on hold until plan 002 S5. Tag, push, and PyPI publish remain owner decisions.
+L0–L7 are implemented. L8 checks passed on the final commit; release awaits the owner. Tag, push, and PyPI publish remain owner decisions.
 
 ## Slice Ledger
 
@@ -52,4 +52,4 @@ The owner authorized the build. L0–L7 are done. L8 is on hold: on 9 Oct 2026 t
 | EOS, fade, end-on-pause | done | plan 001 L5 | | Unit test, no weights |
 | Strict bundle load and voice-state import | done | plan 001 L6 | | Strict load, then short clips |
 | API, CLI, docs, version | done | plan 001 L7 | | CLI help and a wav |
-| Release preparation (owner-gated) | on hold | plan 001 L8, plan 002 S5 | | Rerun the wheel check and fresh-venv smoke on the final commit |
+| Release preparation (owner-gated) | checks passed, release awaiting owner | plan 001 L8, plan 002 S5 | | Tag, push, PyPI on owner's word |

@@ -1,8 +1,8 @@
 ---
-status: open
+status: closed
 priority: P2
 created: 2026-10-09
-updated: 2026-10-09
+updated: 2026-10-16
 tags: audio-quality, languages, loudness
 type: bug
 issue_kind: investigation
@@ -136,7 +136,7 @@ The owner listened to the normalized files: they sound very good. French `estell
 - **Options (owner):** (a) leave `estelle` as is and document that `eve`, `george`, or `alba` are brighter; (b) change the French CLI default voice; (c) an opt-in brightening, for example folded into `--normalize` for dark voices or its own flag (the shelf is about 10 lines of scipy-free biquad); (d) report upstream that `estelle` is dark relative to the other voices, with the table above. Nothing is changed in the repo for this yet.
 - **Done 10 Oct (uncommitted):** the owner chose option (c) as its own opt-in: `brighten_speech`, `generate_audio(brighten=False)`, `--brighten` (+10 dB shelf at 1.5 kHz, runs before normalize), 4 tests, changelog line, README "Brightness" section. pytest: 74 passed. CLI smoke on `estelle`: 2–4 kHz −29.3 dB against `alba` −27.4. Upstream report not drafted or sent.
 - **Owner listen (10 Oct):** both shelves are good in short and long; 1.5 kHz +10 dB is better than 800 Hz +10 dB.
-- **Upstream report is ready to draft**, not sent. Repro: load `french`, voices `estelle` and `alba`, same text, temperature 0.3, compare band energies; or listen to `short_1` against `short_4`.
+- **Upstream report drafted** at `koder/docs/upstream-estelle-report.md`, not sent. Repro: load `french`, voices `estelle` and `alba`, same text, temperature 0.3, compare band energies; or listen to `short_1` against `short_4`.
 
 ## Investigation leads
 
@@ -154,3 +154,7 @@ The owner listened to the normalized files: they sound very good. French `estell
 - [ ] Clarity is judged by ear: the owner listens to `samples/issue002/`, including the `--normalize` files.
 - [x] The owner chooses a fix: different default voices, opt-in normalization, documentation only, or no change. Chosen: opt-in normalization, keep the default voices.
 - [x] Any change ships with a test and a `CHANGELOG.md` line before `v0.3.0` is tagged. Not committed yet.
+
+## Closure (16 Oct 2026)
+
+The owner listened to the normalized samples (very good) and the `french_clarity` set. Resolution: opt-in `--normalize` (`4fb173a`) and opt-in `--brighten` for dark voices such as `estelle` (`acba497`). The port matches upstream at temperature 0; the upstream `estelle` report is drafted, not sent. Review 03 P3-2 done in `40d14ee`.
