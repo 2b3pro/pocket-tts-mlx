@@ -14,7 +14,7 @@ import numpy as np
 
 from pocket_tts_mlx.conditioners.base import TokenizedText
 from pocket_tts_mlx.data.audio import audio_read
-from pocket_tts_mlx.data.audio_utils import convert_audio, end_on_pause, normalize_loudness
+from pocket_tts_mlx.data.audio_utils import brighten_speech, convert_audio, end_on_pause, normalize_loudness
 from pocket_tts_mlx.default_parameters import (
     DEFAULT_EOS_THRESHOLD,
     DEFAULT_LANGUAGE,
@@ -473,12 +473,15 @@ class TTSModel(nn.Module):
         fade_in_ms: int = 0,
         warmup_frames: int = _MIMI_WARMUP_FRAMES,
         normalize: bool = False,
+        brighten: bool = False,
     ) -> mx.array:
         """Generate full audio array from text.
 
         `normalize=True` scales the result to `NORMALIZE_TARGET_DBFS` speech level
         with peaks under `NORMALIZE_PEAK_DBFS`. It is off by default, like upstream.
-        `generate_audio_stream` never normalizes.
+        `brighten=True` first adds a +10 dB high shelf at 1.5 kHz (`brighten_speech`) for
+        dark voices such as french `estelle`; it is off by default too. When both are set,
+        brightening runs before normalization. `generate_audio_stream` does neither.
         """
         audio_chunks = []
         for chunk in self.generate_audio_stream(
@@ -492,6 +495,8 @@ class TTSModel(nn.Module):
             audio_chunks.append(chunk)
         audio = mx.concatenate(audio_chunks, axis=0)
         audio = self._postprocess_audio_start(audio, trim_start_ms=trim_start_ms, fade_in_ms=fade_in_ms)
+        if brighten:
+            audio = mx.array(brighten_speech(np.array(audio), self.sample_rate))
         if normalize:
             audio = mx.array(normalize_loudness(np.array(audio), self.sample_rate))
         # Materialize the array so external np.array timing reflects generation cost.

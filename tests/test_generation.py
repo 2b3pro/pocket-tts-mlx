@@ -8,7 +8,7 @@ import mlx.core as mx
 import numpy as np
 
 import pocket_tts_mlx
-from pocket_tts_mlx.data.audio_utils import end_on_pause, normalize_loudness
+from pocket_tts_mlx.data.audio_utils import brighten_speech, end_on_pause, normalize_loudness
 from pocket_tts_mlx.models.mimi import build_mimi
 from pocket_tts_mlx.models.tts_model import (
     TTSModel,
@@ -140,3 +140,44 @@ def test_generate_audio_normalizes_only_when_asked():
     normalized = np.array(TTSModel.generate_audio(model, {}, "Hallo.", normalize=True))
     assert np.array_equal(plain, np.array(quiet))
     assert abs(_active_dbfs(normalized) + 18.0) < 0.1
+
+
+def _band_db(audio: np.ndarray, low: float, high: float, sample_rate: int = 24_000) -> float:
+    spectrum = np.abs(np.fft.rfft(audio)) ** 2
+    freqs = np.fft.rfftfreq(len(audio), 1 / sample_rate)
+    return 10 * np.log10(spectrum[(freqs >= low) & (freqs < high)].sum() + 1e-12)
+
+
+def test_brighten_lifts_highs_and_leaves_lows():
+    rng = np.random.default_rng(0)
+    audio = rng.standard_normal(48_000).astype(np.float32) * 0.05
+    out = brighten_speech(audio, 24_000)
+    assert out.dtype == np.float32 and out.shape == audio.shape
+    assert abs(_band_db(out, 50, 300) - _band_db(audio, 50, 300)) < 0.5
+    assert abs(_band_db(out, 5_000, 11_000) - _band_db(audio, 5_000, 11_000) - 10.0) < 0.5
+
+
+def test_brighten_zero_gain_and_empty_input_are_unchanged():
+    audio = np.linspace(-0.1, 0.1, 1_000, dtype=np.float32)
+    assert np.array_equal(brighten_speech(audio, 24_000, gain_db=0), audio)
+    empty = np.zeros(0, dtype=np.float32)
+    assert brighten_speech(empty, 24_000).shape == (0,)
+
+
+def test_brighten_is_off_by_default():
+    generate = inspect.signature(TTSModel.generate_audio)
+    assert generate.parameters["brighten"].default is False
+
+
+def test_generate_audio_brightens_only_when_asked():
+    rng = np.random.default_rng(1)
+    noise = mx.array(rng.standard_normal(24_000).astype(np.float32) * 0.05)
+    model = SimpleNamespace(
+        sample_rate=24_000,
+        generate_audio_stream=lambda **kwargs: iter([noise]),
+        _postprocess_audio_start=lambda audio, trim_start_ms, fade_in_ms: audio,
+    )
+    plain = np.array(TTSModel.generate_audio(model, {}, "Bonjour."))
+    bright = np.array(TTSModel.generate_audio(model, {}, "Bonjour.", brighten=True))
+    assert np.array_equal(plain, np.array(noise))
+    assert _band_db(bright, 5_000, 11_000) > _band_db(plain, 5_000, 11_000) + 9.0

@@ -80,7 +80,7 @@ def test_help_shows_the_new_flags():
         text=True,
     )
     assert result.returncode == 0
-    for flag in ("--language", "--config", "--temperature", "--warmup-frames", "--frames-after-eos", "--normalize"):
+    for flag in ("--language", "--config", "--temperature", "--warmup-frames", "--frames-after-eos", "--normalize", "--brighten"):
         assert flag in result.stdout
     assert "default: 50" in result.stdout or "Max tokens" in result.stdout
 
@@ -95,13 +95,13 @@ def test_cli_passes_normalize_to_generate_audio(monkeypatch, tmp_path):
             return {}
 
         def generate_audio(self, **kwargs):
-            seen.append(kwargs["normalize"])
+            seen.append((kwargs["normalize"], kwargs["brighten"]))
             return mx.zeros((2_400,))
 
     monkeypatch.setattr(cli, "TTSModel", SimpleNamespace(load_model=lambda **kwargs: FakeModel()))
-    for extra in ([], ["--normalize"]):
+    for extra in ([], ["--normalize"], ["--brighten"]):
         out = tmp_path / f"out{len(seen)}.wav"
         monkeypatch.setattr(sys, "argv", ["pocket-tts-mlx", "--language", "german", "-o", str(out), *extra, "Hallo."])
         assert cli.main() == 0
         assert out.exists()
-    assert seen == [False, True]
+    assert seen == [(False, False), (True, False), (False, True)]

@@ -4,9 +4,14 @@ import math
 from typing import Any
 
 import numpy as np
-from scipy.signal import resample_poly
+from scipy.signal import lfilter, resample_poly
 
-from pocket_tts_mlx.default_parameters import NORMALIZE_PEAK_DBFS, NORMALIZE_TARGET_DBFS
+from pocket_tts_mlx.default_parameters import (
+    BRIGHTEN_SHELF_DB,
+    BRIGHTEN_SHELF_HZ,
+    NORMALIZE_PEAK_DBFS,
+    NORMALIZE_TARGET_DBFS,
+)
 
 
 def _as_2d(wav: np.ndarray) -> np.ndarray:
@@ -117,3 +122,39 @@ def normalize_loudness(
     centres = np.arange(n_blocks) * block + (block - 1) / 2
     gain = np.interp(np.arange(out.shape[-1]), centres, need)
     return (out * gain).astype(np.float32)
+
+
+def brighten_speech(
+    wav: np.ndarray,
+    sample_rate: int,
+    freq_hz: float = BRIGHTEN_SHELF_HZ,
+    gain_db: float = BRIGHTEN_SHELF_DB,
+) -> np.ndarray:
+    """Apply a second-order high shelf (RBJ cookbook) of `gain_db` above `freq_hz`.
+
+    It lifts dark voices such as french `estelle` without touching the low
+    harmonics. The output can be louder than the input and is not limited;
+    combine it with `normalize_loudness` to set the level.
+    """
+    wav = np.asarray(wav, dtype=np.float32)
+    if gain_db == 0 or wav.shape[-1] == 0:
+        return wav
+    amp = 10 ** (gain_db / 40)
+    w = 2 * math.pi * freq_hz / sample_rate
+    cos, sin = math.cos(w), math.sin(w)
+    q = 2 * math.sqrt(amp) * (sin / 2 * math.sqrt(2.0))
+    b = np.array(
+        [
+            amp * ((amp + 1) + (amp - 1) * cos + q),
+            -2 * amp * ((amp - 1) + (amp + 1) * cos),
+            amp * ((amp + 1) + (amp - 1) * cos - q),
+        ]
+    )
+    a = np.array(
+        [
+            (amp + 1) - (amp - 1) * cos + q,
+            2 * ((amp - 1) - (amp + 1) * cos),
+            (amp + 1) - (amp - 1) * cos - q,
+        ]
+    )
+    return lfilter(b / a[0], a / a[0], wav).astype(np.float32)

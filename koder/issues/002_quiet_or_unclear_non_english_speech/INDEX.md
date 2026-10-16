@@ -116,6 +116,28 @@ Long paragraphs (13–15 s, several chunks, default voice, temperature 0.3, seed
 
 Without the flag, output is unchanged: German still matches upstream at corr 0.99856. French clarity is the same as upstream, so the port has nothing to fix there. The 24-layer French model is the untried lead if it needs more.
 
+## French `estelle` clarity (10 Oct follow-up)
+
+The owner listened to the normalized files: they sound very good. French `estelle` was still the least clear.
+
+- **Not an intelligibility problem.** Whisper-medium (local, `koder/docs/parity-scripts/asr.py`) transcribes every French voice at WER 0.00 on the short line, and `estelle` at 0.00 on a long paragraph.
+- **It is a dark, band-limited timbre.** Share of active energy by band (dB re total; `spec.py`), short line, temperature 0.3:
+
+  | voice | 0.5–2 kHz | 2–4 kHz | 4–8 kHz | 95% roll-off |
+  | --- | --- | --- | --- | --- |
+  | estelle | −17.5 | −37.5 | −43.7 | 492 Hz |
+  | alba | −12.0 | −27.4 | −33.5 | 562 Hz |
+  | eve | −3.6 | −21.5 | −30.7 | 1289 Hz |
+
+  `estelle` is about 10 dB below `alba` and 15–20 dB below `eve` from 2 kHz up. Long text and a second seed give the same picture. `estelle` is equally dark in German and Dutch.
+- **Upstream is identical.** Torch at `41cbc84`, same line and voice: 2–4 kHz −37.0 against `alba` −26.4 (port: −37.5 and −27.4). The cause is the `estelle` voice conditioning, not the port, the sampler, or the temperature (0.7 moves it by about 3 dB).
+- **A gentle high shelf fixes the balance.** An RBJ high shelf at 800 Hz or 1.5 kHz with +10 dB, followed by `normalize_loudness`, puts `estelle`'s 2–8 kHz balance within about 1 dB of `alba` (2–4 kHz −27.9 / −28.7 against −27.4). WER stays 0.00. Peak and level are as in the normalize contract.
+- **Listening set:** `samples/issue002/french_clarity/` (`short_*` and `long_*`: 1 plain normalized, 2 shelf 800 Hz +10, 3 shelf 1.5 kHz +10, 4 `alba` reference; `short_5` is upstream torch).
+- **Options (owner):** (a) leave `estelle` as is and document that `eve`, `george`, or `alba` are brighter; (b) change the French CLI default voice; (c) an opt-in brightening, for example folded into `--normalize` for dark voices or its own flag (the shelf is about 10 lines of scipy-free biquad); (d) report upstream that `estelle` is dark relative to the other voices, with the table above. Nothing is changed in the repo for this yet.
+- **Done 10 Oct (uncommitted):** the owner chose option (c) as its own opt-in: `brighten_speech`, `generate_audio(brighten=False)`, `--brighten` (+10 dB shelf at 1.5 kHz, runs before normalize), 4 tests, changelog line, README "Brightness" section. pytest: 74 passed. CLI smoke on `estelle`: 2–4 kHz −29.3 dB against `alba` −27.4. Upstream report not drafted or sent.
+- **Owner listen (10 Oct):** both shelves are good in short and long; 1.5 kHz +10 dB is better than 800 Hz +10 dB.
+- **Upstream report is ready to draft**, not sent. Repro: load `french`, voices `estelle` and `alba`, same text, temperature 0.3, compare band energies; or listen to `short_1` against `short_4`.
+
 ## Investigation leads
 
 1. **Port vs upstream.** Run the temperature-0 parity check for `german`/`juergen` and `dutch`/`daan`. If upstream torch is just as quiet, the cause is the model or voice, not the port. The parity script from review 03 was deleted with scratch; it is short to rewrite (load both, temp 0, compare waveforms).

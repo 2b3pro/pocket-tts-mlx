@@ -10,7 +10,7 @@ Runtime is torch-free.
 - Shipped languages include french, german, dutch, italian, portuguese, and spanish, plus 24-layer previews and a drifting English sampler.
 - Current models use `tokenizer.json`. `b6369a24` still uses SentencePiece.
 - Built-in voices follow the language. `--language french` uses `estelle`.
-- Opt-in `--normalize` raises quiet voices to a common level.
+- Opt-in `--normalize` raises quiet voices to a common level. Opt-in `--brighten` lifts dark voices such as french `estelle`.
 - Release notes: [v0.3.0](https://github.com/jishnuvenugopal/pocket-tts-mlx/blob/main/CHANGELOG.md).
 
 **Installation**
@@ -75,6 +75,14 @@ Output level depends on the voice. `juergen` (german) and `daan` (dutch) come ou
 
 ```bash
 pocket-tts-mlx --language german --normalize -o hallo.wav "Guten Morgen."
+```
+
+**Brightness**
+
+The french `estelle` voice sounds muffled: above 2 kHz it is about 10 dB below `alba`, in upstream Pocket TTS as well. `--brighten`, or `generate_audio(..., brighten=True)`, adds a +10 dB high shelf at 1.5 kHz. It is off by default. Combined with `--normalize`, brightening runs first. `generate_audio_stream` does not brighten.
+
+```bash
+pocket-tts-mlx --language french --brighten --normalize -o bonjour.wav "Bonjour."
 ```
 
 **Onset options**

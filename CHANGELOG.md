@@ -9,6 +9,7 @@
 - Per-language built-in voices. The CLI default is `alba`, `estelle`, `giovanni`, `juergen`, `lola`, `rafael`, or `daan`.
 - `--language`, `--config`, and `--temperature`. Text `-` reads stdin. `sampler_decode_steps` replaces `lsd_decode_steps`, which still works as a deprecated alias.
 - Voice-state `.safetensors` files load as voices from a local path, `hf://`, or an http(s) URL.
+- Opt-in brightening: `generate_audio(..., brighten=True)` and `--brighten` add a +10 dB high shelf at 1.5 kHz. The french `estelle` voice is about 10 dB darker than `alba` above 2 kHz, in upstream as well. Off by default; with `--normalize`, brightening runs first.
 - Opt-in loudness normalization: `generate_audio(..., normalize=True)` and `--normalize` scale speech to about -18 dBFS with peaks under -1 dBFS. Off by default. `juergen` and `daan` speak 6 to 9 dB quieter than the other defaults, in upstream as well.
 
 ### Changed

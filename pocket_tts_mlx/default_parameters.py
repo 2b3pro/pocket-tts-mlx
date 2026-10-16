@@ -14,6 +14,10 @@ MAX_TOKEN_PER_CHUNK = 50
 # so it stays off by default; some built-in voices (juergen, daan) speak 6-9 dB quieter.
 NORMALIZE_TARGET_DBFS = -18.0
 NORMALIZE_PEAK_DBFS = -1.0
+# Opt-in brightening (`brighten=True`, `--brighten`): a high shelf. Upstream has none;
+# the french `estelle` voice is about 10 dB darker than `alba` above 2 kHz.
+BRIGHTEN_SHELF_HZ = 1500.0
+BRIGHTEN_SHELF_DB = 10.0
 
 # Source recording behind the alba voice. Custom configs cannot use a precomputed
 # state, so the CLI clones this file instead.

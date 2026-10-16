@@ -115,6 +115,11 @@ def main() -> int:
         action="store_true",
         help="Scale the output to about -18 dBFS speech level, peaks under -1 dBFS. Off by default.",
     )
+    parser.add_argument(
+        "--brighten",
+        action="store_true",
+        help="Add a +10 dB high shelf at 1.5 kHz for dark voices such as french estelle. Off by default.",
+    )
     parser.add_argument("--verbose", "-V", action="store_true", help="Verbose logging")
 
     args = parser.parse_args()
@@ -154,6 +159,7 @@ def main() -> int:
             fade_in_ms=args.fade_in_ms,
             warmup_frames=args.warmup_frames,
             normalize=args.normalize,
+            brighten=args.brighten,
         )
 
         out_path = Path(args.output)
