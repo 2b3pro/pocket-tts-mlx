@@ -18,17 +18,16 @@ updated_at: "16 Oct 2026 | 04:30 PM +08"
 ## Present
 
 - Issue 002 is closed. Issue 001 stays open only for the release. The plan 001 L8 checks passed on the final code: build, `twine check`, 20 YAMLs, no `koder/` or `tests/` in the dists, and a fresh-venv CLI smoke with `--brighten --normalize`.
-- `0.3.0` is not tagged, pushed, or published.
+- `0.3.0` is tagged (`v0.3.0`), pushed, and published on PyPI (16 Oct 2026). History after `v0.2.1` was rewritten to drop local paths; the local `backup-prerewrite` branch holds the old history and can be deleted.
 - Validation: `.venv/bin/python -m pytest -q` → 74 passed; scratch gate and `git diff --check` clean at close.
 - Outside the repo, kept for the owner:
   - `../samples/issue002/` (A/B pairs, `french_clarity/`, sweeps) and `../samples/*.wav`;
   - `../parity/` (914 MB upstream torch venv). It is no longer needed in-repo: see `koder/docs/parity-harness.md`;
   - `.venv` and the HF cache `~/.cache/huggingface/hub/models--kyutai--pocket-tts-without-voice-cloning`.
-- Local `main` is ahead of `origin/main`. Nothing pushed.
 
 ## Future
 
-- Next action (owner): say when to tag `v0.3.0`, push, and publish to PyPI. Nothing else blocks the release.
+- Next action (owner): optionally create a GitHub release from `v0.3.0`; delete `backup-prerewrite`.
 - Upstream `estelle` report: re-run the repro against current upstream `main`, check for an existing issue, then send it if wanted (draft is in `koder/docs/`).
 - Optional, unscheduled: review 03 P3-3, P3-4 (license format, deadline 2027-02-18), P3-5 (AGENTS.md "Current release" after publish). Cloning from your own audio is untested.
 - Delete `../parity/` and the sweep voices whenever the owner is done with them.
