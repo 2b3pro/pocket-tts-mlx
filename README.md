@@ -2,7 +2,7 @@
 
 MLX backend for [pocket-tts](https://github.com/kyutai-labs/pocket-tts) optimized for Apple Silicon.
 
-Runtime is torch-free. Torch is only required for optional parity tests.
+Runtime is torch-free.
 
 **What's New in 0.3.0**
 

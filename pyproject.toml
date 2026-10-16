@@ -41,7 +41,6 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "torch>=2.5.0",
-    "pocket-tts>=1.0.3",
     "pytest>=7.0",
     "pytest-xdist>=3.0",
 ]

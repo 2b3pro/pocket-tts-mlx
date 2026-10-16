@@ -56,7 +56,7 @@ This repo uses the koder pattern for durable agent handoff and project memory.
 
 `pocket-tts-mlx` is a torch-free MLX inference port of [kyutai-labs/pocket-tts](https://github.com/kyutai-labs/pocket-tts) for Apple Silicon. Product code lives in `pocket_tts_mlx/`. The CLI entry is `pocket-tts-mlx` (`pocket_tts_mlx.main:main`). Current release is v0.2.1.
 
-Local setup: use a repo-local `.venv` (gitignored), then `pip install -e . pytest` (Python 3.10+). Run the weight-free tests with `python -m pytest -q` (`tests/`, not packaged). Optional parity tests would need `pip install -e ".[dev]"` (`torch`, `pocket-tts`). Do not commit weights, wavs, or caches (see `.gitignore`).
+Local setup: use a repo-local `.venv` (gitignored), then `pip install -e . pytest` (Python 3.10+). Run the weight-free tests with `python -m pytest -q` (`tests/`, not packaged). The upstream parity harness is not part of the repo; its notes are under `koder/`. Do not commit weights, wavs, or caches (see `.gitignore`).
 
 MLX aborts inside the command sandbox (`Fatal Python error: Aborted` on `import mlx`). Run `.venv/bin/python -m pytest -q` and any other command that imports MLX with the sandbox disabled (`required_permissions: ["all"]`) on the first attempt. Skip the sandboxed run.
 
