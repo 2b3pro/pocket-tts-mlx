@@ -48,6 +48,7 @@ A +10 dB high shelf at 1.5 kHz brings `estelle`'s 2–8 kHz balance within about
 
 ## Before sending
 
-- Re-run the repro against current upstream `main`, since `41cbc84` may be behind.
+- Checked 16 Oct 2026: upstream `main` (`ec569b2`) is 6 commits past `41cbc84`, and none touch the `french` config, weights or voices (changes are English configs, docs, tests and CLI). The numbers should carry over; a fresh run on `main` is optional.
+- Searched the upstream issues for `estelle` and French quality: no existing report (nearest are #174 and #221, unrelated).
 - Attach `short_1_estelle_plain_normalized.wav` and `short_4_ref_alba_normalized.wav` from `samples/issue002/french_clarity/` (they are outside the repo).
-- Check the upstream contribution guide and search for an existing issue about `estelle` first.
+- Check the upstream contribution guide.
