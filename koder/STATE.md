@@ -1,5 +1,5 @@
 ---
-updated_at: "23 Oct 2026 | 07:45 PM IST"
+updated_at: "23 Oct 2026 | 07:52 PM IST"
 ---
 
 # Koder State
@@ -15,10 +15,11 @@ updated_at: "23 Oct 2026 | 07:45 PM IST"
 
 ## Present
 
-- Package version: `0.3.1.dev0`, unreleased. `main` contains the integrated code
-  at `67f769a` and is pushed to `2b3pro/pocket-tts-mlx`.
-- Active local branch: `trial/resident-http`. `8f05873` adds an optional
-  loopback HTTP comparison harness and blind listening page outside the package.
+- Package version: `0.3.1.dev0`, unreleased. Active branch: `main`.
+- `trial/resident-http` was fast-forwarded into `main` through `b6df3b9`,
+  including the aligned code, trial harness, and deployment handoff. `8f05873`
+  adds the optional loopback HTTP comparison harness and blind listening page
+  outside the package. The merge had no conflicts.
 - Default: October English at temperature 0.3. There are 28 shipped configs
   (all 27 current Kyutai configs plus the original `b6369a24`) and 27 voices.
 - Seven languages, 24-layer previews, drifting, and six small English models
@@ -38,11 +39,13 @@ updated_at: "23 Oct 2026 | 07:45 PM IST"
   `koder/docs/upstream-alignment.md`; user guidance: `README.md`.
 - A matched April-model HTTP trial favors MLX on the M2 Pro: streaming first
   body 25–37 ms vs 81–83 ms; buffered wall time about 41% lower. Process RSS
-  is higher (908 vs 612 MiB); GPU contention and sustained load are untested.
+  is higher (908 vs 612 MiB). Synthetic GPU contention was checked during
+  deployment; sustained LLM coexistence remains unmeasured.
 - The owner's four blind choices split 2–2; the owner then requested the
   upgrade. Nova now uses the persistent MLX resident on `127.0.0.1:8894`.
 - Private PAI commit `d932092e` adds the resident adapter, tests, installer,
-  and launchd template. An installed wheel and isolated venv live on the
+  and launchd template; it is pushed to private `origin/main`.
+  An installed wheel and isolated venv live on the
   internal SSD; no Torch or external source imports are used by that job.
 - Gateway launchd sets `POCKET_RESIDENT_URL=http://127.0.0.1:8894`. April
   model, temperature 0.7, voice state, and Nova allowlist are preserved.
@@ -55,10 +58,10 @@ updated_at: "23 Oct 2026 | 07:45 PM IST"
   Persistent service receipt/rollback preimage: local application support
   `pai/pocket-mlx-server/deployment.json`. Exact rollback: PAI's
   `Infrastructure/VoiceServer/pocket-server/README.md`.
-- Trial validation: 142 tests passed, 15 opt-in tests skipped; real HTTP
+- Merged-main validation: 142 tests passed, 15 opt-in tests skipped; real HTTP
   contract/disconnect checks passed; sdist/wheel and archive audits passed.
 - Trial results/limits: `koder/analysis/002_http_trial/INDEX.md`;
-  repeatable commands: `koder/docs/http-trial.md`. No trial branch push yet.
+  repeatable commands: `koder/docs/http-trial.md`.
 
 ## Future
 
@@ -67,5 +70,5 @@ updated_at: "23 Oct 2026 | 07:45 PM IST"
   the gateway URL to port 8892 and reloading it with the documented wait.
 - Review future upstream changes deliberately. Model releases do not propagate
   automatically to this independent port.
-- Publishing a package remains a separate task; local trial/deployment commits
-  have not been pushed. Unrelated PAI worktree changes were preserved.
+- Publishing a package remains a separate task. Unrelated PAI worktree edits
+  were preserved; only the committed deployment change was pushed there.
