@@ -10,6 +10,7 @@ from pocket_tts_mlx.modules.dummy_quantizer import DummyQuantizer
 from pocket_tts_mlx.modules.mimi_transformer import ProjectedTransformer
 from pocket_tts_mlx.modules.resample import ConvDownsample1d, ConvTrUpsample1d
 from pocket_tts_mlx.modules.seanet import SEANetDecoder, SEANetEncoder
+from pocket_tts_mlx.utils.config import MimiConfig
 
 logger = logging.getLogger()
 
@@ -25,10 +26,10 @@ class MimiModel(nn.Module):
         encoder_frame_rate: float,
         sample_rate: int,
         channels: int,
-        inner_dim: int | None,
-        outer_dim: int | None,
         encoder_transformer: ProjectedTransformer,
         decoder_transformer: ProjectedTransformer,
+        inner_dim: int | None = None,
+        outer_dim: int | None = None,
     ):
         super().__init__()
         self.encoder = encoder
@@ -54,7 +55,7 @@ class MimiModel(nn.Module):
                 int(downsample_stride), dimension=dimension, out_dimension=inner_dim
             )
             self.upsample = ConvTrUpsample1d(
-                int(downsample_stride), dimension=dimension, in_dimension=outer_dim
+                int(downsample_stride), dimension=decoder.dimension, in_dimension=outer_dim
             )
 
     @property
@@ -74,18 +75,44 @@ class MimiModel(nn.Module):
         return self.upsample(x, mimi_state)
 
     def decode_from_latent(self, latent: mx.array, mimi_state):
-        """Decode latent frames into waveform."""
+        """Decode `[B, T, C]` latent frames into a waveform.
+
+        The quantizer runs here. Callers pass the flow latent directly.
+        """
+        latent = self.quantizer(mx.transpose(latent, (0, 2, 1)))
         emb = self._to_encoder_framerate(latent, mimi_state)
         (emb,) = self.decoder_transformer(emb, mimi_state)
         out = self.decoder(emb, mimi_state)
         return out
 
     def encode_to_latent(self, x: mx.array) -> mx.array:
-        """Encode waveform into latent frames."""
+        """Encode a `[B, C, T]` waveform into `[B, T, C]` latent frames."""
         assert x.ndim == 3, f"Expected audio of shape [B, C, T] but got {x.shape}"
         frame_size = self.frame_size
         x = pad_for_conv1d(x, frame_size, frame_size)
         emb = self.encoder(x, model_state=None)
         (emb,) = self.encoder_transformer(emb, model_state=None)
         emb = self._to_framerate(emb)
-        return emb
+        return mx.transpose(emb, (0, 2, 1))
+
+
+def build_mimi(config: MimiConfig) -> MimiModel:
+    """Build an unweighted Mimi model from a config section."""
+    mimi_config = config.model_dump()
+    encoder = SEANetEncoder(**mimi_config["seanet"])
+    decoder = SEANetDecoder(**(mimi_config["decoder_seanet"] or mimi_config["seanet"]))
+    return MimiModel(
+        encoder,
+        decoder,
+        DummyQuantizer(**mimi_config["quantizer"]),
+        channels=mimi_config["channels"],
+        sample_rate=mimi_config["sample_rate"],
+        frame_rate=mimi_config["frame_rate"],
+        encoder_frame_rate=mimi_config["sample_rate"] / encoder.hop_length,
+        inner_dim=mimi_config["inner_dim"],
+        outer_dim=mimi_config["outer_dim"],
+        encoder_transformer=ProjectedTransformer(**mimi_config["transformer"]),
+        decoder_transformer=ProjectedTransformer(
+            **(mimi_config["decoder_transformer"] or mimi_config["transformer"])
+        ),
+    )

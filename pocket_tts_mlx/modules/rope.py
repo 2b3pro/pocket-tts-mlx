@@ -9,13 +9,10 @@ def apply_rope(q: mx.array, k: mx.array, offset: int | mx.array = 0, max_period:
     B, T, H, D = q.shape
     Bk, Tk, Hk, Dk = k.shape
     assert (B, T, D) == (Bk, Tk, Dk)
-    assert H == Hk
     assert D % 2 == 0
 
-    qk = mx.stack(
-        [mx.transpose(q, (0, 2, 1, 3)), mx.transpose(k, (0, 2, 1, 3))],
-        axis=1,
-    )
+    # A single fused call also supports GQA's unequal query/key head counts.
+    qk = mx.transpose(mx.concatenate([q, k], axis=2), (0, 2, 1, 3))
     qk = mx.fast.rope(
         qk,
         D,
@@ -24,7 +21,7 @@ def apply_rope(q: mx.array, k: mx.array, offset: int | mx.array = 0, max_period:
         scale=1.0,
         offset=offset,
     )
-    qo, ko = qk[:, 0], qk[:, 1]
+    qo, ko = mx.split(qk, [H], axis=1)
     return mx.transpose(qo, (0, 2, 1, 3)), mx.transpose(ko, (0, 2, 1, 3))
 
 

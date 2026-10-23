@@ -6,7 +6,7 @@ import hashlib
 import logging
 import time
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlsplit
 
 import requests
 
@@ -59,7 +59,7 @@ def download_if_necessary(file_path: str) -> Path:
     if file_path.startswith("http://") or file_path.startswith("https://"):
         # Cache by URL hash to avoid repeated downloads.
         cache_dir = make_cache_directory()
-        suffix = Path(urlparse(file_path).path).suffix
+        suffix = Path(urlsplit(file_path).path).suffix or ".bin"
         cached_file = cache_dir / (hashlib.sha256(file_path.encode()).hexdigest() + suffix)
         if not cached_file.exists():
             response = requests.get(file_path)

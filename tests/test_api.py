@@ -1,0 +1,107 @@
+"""API and CLI defaults that do not need weights."""
+
+import io
+import subprocess
+import sys
+from types import SimpleNamespace
+
+import mlx.core as mx
+import pytest
+
+from pocket_tts_mlx import __version__
+from pocket_tts_mlx.default_parameters import ALBA_SOURCE_WAV, get_default_voice_for_language
+import pocket_tts_mlx.main as cli
+from pocket_tts_mlx.main import cli_voice, read_cli_text
+from pocket_tts_mlx.models.tts_model import (
+    resolve_sampler_steps,
+    resolve_temperature,
+    select_model_request,
+)
+from pocket_tts_mlx.utils.config import load_config
+from pocket_tts_mlx.models.tts_model import CONFIGS_DIR
+
+
+def test_version_identifies_the_unreleased_fork():
+    assert __version__ == "0.3.1.dev0"
+
+
+def test_omitting_config_and_language_selects_english():
+    assert select_model_request(None, None) == "english"
+    assert select_model_request("b6369a24", None) == "b6369a24"
+    assert select_model_request(None, "french") == "french"
+    with pytest.raises(ValueError, match="both"):
+        select_model_request("b6369a24", "english")
+
+
+def test_omitted_temperature_uses_the_config_value():
+    legacy = load_config(CONFIGS_DIR / "b6369a24.yaml")
+    assert resolve_temperature(None, legacy.default_temperature) == 0.3
+    assert resolve_temperature(0.7, legacy.default_temperature) == 0.7
+
+
+def test_lsd_decode_steps_overrides_sampler_steps(caplog):
+    with caplog.at_level("WARNING"):
+        assert resolve_sampler_steps(1, 4) == 4
+    assert "deprecated" in caplog.text
+    assert resolve_sampler_steps(3, None) == 3
+
+
+def test_default_voice_follows_the_language_stem():
+    assert get_default_voice_for_language("french") == "estelle"
+    assert get_default_voice_for_language("french_24l") == "estelle"
+    assert get_default_voice_for_language("italian") == "giovanni"
+    assert get_default_voice_for_language("german") == "juergen"
+    assert get_default_voice_for_language("spanish") == "lola"
+    assert get_default_voice_for_language("portuguese") == "rafael"
+    assert get_default_voice_for_language("dutch") == "daan"
+    assert get_default_voice_for_language("english") == "alba"
+    assert get_default_voice_for_language(None) == "alba"
+    assert get_default_voice_for_language("english", custom_config=True) == ALBA_SOURCE_WAV
+
+
+def test_cli_voice_uses_alba_audio_for_a_custom_config():
+    assert cli_voice(None, "french", None) == "estelle"
+    assert cli_voice("marius", "french", None) == "marius"
+    assert cli_voice(None, None, "/tmp/custom.yaml") == ALBA_SOURCE_WAV
+    assert cli_voice(None, None, str(CONFIGS_DIR / "dutch.yaml")) == "daan"
+
+
+def test_dash_reads_stdin(monkeypatch):
+    monkeypatch.setattr(sys, "stdin", io.StringIO("Hello from stdin."))
+    assert read_cli_text("-") == "Hello from stdin."
+    assert read_cli_text("keep") == "keep"
+
+
+def test_help_shows_the_new_flags():
+    result = subprocess.run(
+        [sys.executable, "-m", "pocket_tts_mlx", "--help"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0
+    for flag in ("--language", "--config", "--temperature", "--warmup-frames", "--frames-after-eos", "--normalize", "--brighten"):
+        assert flag in result.stdout
+    assert "default: 50" in result.stdout or "Max tokens" in result.stdout
+
+
+def test_cli_passes_normalize_to_generate_audio(monkeypatch, tmp_path):
+    seen = []
+
+    class FakeModel:
+        config = SimpleNamespace(mimi=SimpleNamespace(sample_rate=24_000))
+
+        def get_state_for_audio_prompt(self, voice):
+            return {}
+
+        def generate_audio(self, **kwargs):
+            seen.append((kwargs["normalize"], kwargs["brighten"]))
+            return mx.zeros((2_400,))
+
+    monkeypatch.setattr(cli, "TTSModel", SimpleNamespace(load_model=lambda **kwargs: FakeModel()))
+    for extra in ([], ["--normalize"], ["--brighten"]):
+        out = tmp_path / f"out{len(seen)}.wav"
+        monkeypatch.setattr(sys, "argv", ["pocket-tts-mlx", "--language", "german", "-o", str(out), *extra, "Hallo."])
+        assert cli.main() == 0
+        assert out.exists()
+    assert seen == [(False, False), (True, False), (False, True)]

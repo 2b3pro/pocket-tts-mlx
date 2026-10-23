@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import NamedTuple
 
 import mlx.core as mx
@@ -12,6 +13,15 @@ from pocket_tts_mlx.modules.layer_scale import LayerScale
 from pocket_tts_mlx.modules.rope import RotaryEmbedding
 from pocket_tts_mlx.modules.stateful_module import StatefulModule
 from pocket_tts_mlx.utils.config import FlowLMTransformerConfig
+
+# PyTorch F.gelu(..., approximate="tanh"). Written out so older mlx builds,
+# allowed by the mlx>=0.20 floor, do not need nn.gelu_approx.
+_TANH_GELU_SCALE = math.sqrt(2.0 / math.pi)
+
+
+def tanh_gelu(x: mx.array) -> mx.array:
+    """Tanh approximation of GELU."""
+    return 0.5 * x * (1.0 + mx.tanh(_TANH_GELU_SCALE * (x + 0.044715 * x**3)))
 
 
 class StreamingTransformerLayer(nn.Module):
@@ -25,6 +35,8 @@ class StreamingTransformerLayer(nn.Module):
         rope: RotaryEmbedding,
         layer_scale: float | None = None,
         attention_kind: str = "mimi",
+        attn_dim: int | None = None,
+        num_kv_heads: int | None = None,
     ):
         super().__init__()
         if attention_kind == "mimi":
@@ -33,7 +45,8 @@ class StreamingTransformerLayer(nn.Module):
             )
         else:
             self.self_attn = StreamingMultiheadAttention(
-                rope=rope, embed_dim=d_model, num_heads=num_heads
+                rope=rope, embed_dim=d_model, num_heads=num_heads,
+                attn_dim=attn_dim, num_kv_heads=num_kv_heads,
             )
 
         self.norm1 = nn.LayerNorm(d_model, eps=1e-5)
@@ -53,7 +66,7 @@ class StreamingTransformerLayer(nn.Module):
         """Feed-forward block with pre-norm and residual."""
         x_orig = x
         x = self.norm2(x)
-        update = self.linear2(nn.gelu(self.linear1(x)))
+        update = self.linear2(tanh_gelu(self.linear1(x)))
         return x_orig + self.layer_scale_2(update)
 
     def _sa_block(self, x: mx.array, model_state: dict | None) -> mx.array:
@@ -81,9 +94,11 @@ class StreamingTransformer(nn.Module):
         context: int | None = None,
         max_period: float = 10_000.0,
         kind: str = "mimi",
+        attn_dim: int | None = None,
+        num_kv_heads: int | None = None,
     ):
         super().__init__()
-        assert d_model % num_heads == 0
+        assert (attn_dim or d_model) % num_heads == 0
         self.max_period = max_period
         self.rope = RotaryEmbedding(max_period=max_period)
 
@@ -98,12 +113,14 @@ class StreamingTransformer(nn.Module):
                     rope=self.rope,
                     layer_scale=layer_scale,
                     attention_kind=kind,
+                    attn_dim=attn_dim,
+                    num_kv_heads=num_kv_heads,
                 )
             )
 
     @classmethod
     def from_pydantic_config(cls, config: FlowLMTransformerConfig):
-        dim_feedforward = int(config.d_model * config.hidden_scale)
+        dim_feedforward = config.dim_feedforward or int(config.d_model * config.hidden_scale)
         return cls(
             d_model=config.d_model,
             num_heads=config.num_heads,
@@ -111,6 +128,8 @@ class StreamingTransformer(nn.Module):
             dim_feedforward=dim_feedforward,
             max_period=float(config.max_period),
             kind="flow_lm",
+            attn_dim=config.attn_dim,
+            num_kv_heads=config.num_kv_heads,
         )
 
     def __call__(self, x: mx.array, model_state: dict | None):

@@ -6,45 +6,38 @@ import math
 import time
 from functools import lru_cache
 from pathlib import Path
+from threading import Event
 from typing import Dict, Generator, Optional, Union
-from urllib.parse import urlsplit
 
 import mlx.core as mx
 import mlx.nn as nn
+import numpy as np
 
 from pocket_tts_mlx.conditioners.base import TokenizedText
 from pocket_tts_mlx.data.audio import audio_read
-from pocket_tts_mlx.data.audio_utils import convert_audio
+from pocket_tts_mlx.data.audio_utils import brighten_speech, convert_audio, end_on_pause, normalize_loudness
 from pocket_tts_mlx.default_parameters import (
     DEFAULT_EOS_THRESHOLD,
-    DEFAULT_LSD_DECODE_STEPS,
+    DEFAULT_LANGUAGE,
     DEFAULT_NOISE_CLAMP,
-    DEFAULT_VARIANT,
+    DEFAULT_SAMPLER_DECODE_STEPS,
     MAX_TOKEN_PER_CHUNK,
 )
 from pocket_tts_mlx.models.flow_lm import FlowLMModel
-from pocket_tts_mlx.models.mimi import MimiModel
-from pocket_tts_mlx.modules.dummy_quantizer import DummyQuantizer
-from pocket_tts_mlx.modules.mimi_transformer import ProjectedTransformer
-from pocket_tts_mlx.modules.seanet import SEANetDecoder, SEANetEncoder
-from pocket_tts_mlx.modules.stateful_module import (
-    StatefulModule,
-    increment_steps,
-    init_states,
-)
+from pocket_tts_mlx.models.mimi import build_mimi
+from pocket_tts_mlx.models.text_chunking import prepare_text_prompt, split_into_best_sentences
+from pocket_tts_mlx.modules.stateful_module import increment_steps, init_states
 from pocket_tts_mlx.text_normalization import UserDictionary, normalize_text
 from pocket_tts_mlx.utils.config import Config, load_config
-from pocket_tts_mlx.utils.utils import (
-    display_execution_time,
-    download_if_necessary,
-    size_of_dict,
-)
+from pocket_tts_mlx.utils.utils import display_execution_time, download_if_necessary, size_of_dict
 from pocket_tts_mlx.utils.weight_conversion import (
+    PREDEFINED_VOICE_NAMES,
     PREDEFINED_VOICES,
     get_flow_lm_state_dict_mlx,
     get_mimi_state_dict_mlx,
-    get_predefined_voice_state_uri,
-    load_model_state_mlx,
+    import_flow_state,
+    is_safetensors_source,
+    language_voice_state_url,
     load_predefined_voice_mlx,
     load_safetensors_to_numpy,
     load_weights_to_mlx_model,
@@ -52,10 +45,207 @@ from pocket_tts_mlx.utils.weight_conversion import (
 
 logger = logging.getLogger(__name__)
 
+# Preserve the earlier import location for callers of the fork.
+_is_safetensors_source = is_safetensors_source
+
 
 class GenerationDidNotReachEOS(RuntimeError):
     """Raised when buffered generation reaches its safety limit without EOS."""
 
+
+def speaker_proj_shape(config: Config) -> tuple[int, int]:
+    """Map the codec bottleneck onto the flow transformer width."""
+    return (
+        config.flow_lm.transformer.d_model,
+        config.mimi.inner_dim or config.mimi.seanet.dimension,
+    )
+
+
+def mimi_steps_per_latent(encoder_frame_rate: float, frame_rate: float) -> int:
+    """How many Mimi steps one latent frame advances."""
+    return int(encoder_frame_rate / frame_rate)
+
+
+def note_eos_step(
+    is_eos: bool,
+    generation_step: int,
+    eos_step: Optional[int],
+    min_frames: int = 6,
+) -> Optional[int]:
+    """Record the first EOS at or after `min_frames`. Earlier EOS is ignored."""
+    if is_eos and eos_step is None and generation_step >= min_frames:
+        return generation_step
+    return eos_step
+
+
+def resolve_frames_after_eos(
+    frames_after_eos: Optional[int],
+    model_recommended: Optional[int],
+    frames_after_eos_guess: int,
+) -> int:
+    """Prefer the caller, then the config recommendation, then the text guess + 2."""
+    if frames_after_eos is None:
+        frames_after_eos = model_recommended
+    if frames_after_eos is not None:
+        return frames_after_eos
+    return frames_after_eos_guess + 2
+
+
+def apply_chunk_onset_fade(
+    audio: mx.array, fade: Optional[mx.array]
+) -> tuple[mx.array, Optional[mx.array]]:
+    """Fade the first samples of a chunk once. Later frames receive no ramp."""
+    if fade is None or fade.shape[0] == 0:
+        return audio, None
+    n = min(int(fade.shape[0]), int(audio.shape[-1]))
+    if n <= 0:
+        return audio, None
+    faded = audio[..., :n] * fade[:n].astype(audio.dtype)
+    if n < audio.shape[-1]:
+        audio = mx.concatenate([faded, audio[..., n:]], axis=-1)
+    else:
+        audio = faded
+    return audio, None
+
+
+def prepend_voice_bos(prompt: mx.array, bos: mx.array, insert: bool) -> mx.array:
+    """Prepend the learned BOS voice token when the config asks for it."""
+    if not insert:
+        return prompt
+    return mx.concatenate([bos, prompt], axis=1)
+
+
+CONFIGS_DIR = Path(__file__).resolve().parents[1] / "config"
+
+
+def select_model_request(config: str | Path | None, language: str | None) -> str | Path:
+    """Pick one config stem or path. Omitting both selects english."""
+    if config is not None and language is not None:
+        raise ValueError("Cannot specify both config and language, please choose one or the other.")
+    if config is None and language is None:
+        return DEFAULT_LANGUAGE
+    if language is not None:
+        return language
+    assert config is not None
+    return config
+
+
+def resolve_temperature(temp: float | int | None, default_temperature: float) -> float:
+    """Use the config temperature when the caller does not pass one."""
+    if temp is None:
+        return default_temperature
+    return float(temp)
+
+
+def resolve_sampler_steps(sampler_decode_steps: int, lsd_decode_steps: int | None) -> int:
+    """`lsd_decode_steps` is the deprecated name for `sampler_decode_steps`."""
+    if lsd_decode_steps is not None:
+        logger.warning("lsd_decode_steps is deprecated, use sampler_decode_steps")
+        return lsd_decode_steps
+    return sampler_decode_steps
+
+
+def resolve_config_path(config: str | Path) -> Path:
+    """Map a stem or a yaml path to the file `load_model` will read."""
+    text = str(config)
+    if text.startswith(("hf://", "https://", "http://")):
+        return download_if_necessary(text)
+    if text.endswith(".yaml") or text.endswith(".yml"):
+        return Path(config)
+    return CONFIGS_DIR / f"{text}.yaml"
+
+
+def is_shipped_config(origin: Path | None) -> bool:
+    """True when the config file lives in this package's config directory."""
+    if origin is None:
+        return False
+    return Path(origin).resolve().is_relative_to(CONFIGS_DIR.resolve())
+
+
+def predefined_voice_source(origin: Path | None, name: str) -> str:
+    """Return a voice-state URL, or ``legacy`` for the b6369a24 audio-prompt catalog."""
+    if not is_shipped_config(origin):
+        raise ValueError(
+            "Cannot use predefined voices when the model "
+            "is not loaded from a config associated with a language. "
+            f"Here the origin is {origin}"
+        )
+    assert origin is not None
+    if origin.stem == "b6369a24":
+        if name not in PREDEFINED_VOICES:
+            raise ValueError(
+                f"Predefined voice {name!r} not found, available voices are {list(PREDEFINED_VOICES)}."
+            )
+        return "legacy"
+    if name not in PREDEFINED_VOICE_NAMES:
+        raise ValueError(
+            f"Predefined voice {name!r} not found, available voices are {list(PREDEFINED_VOICE_NAMES)}."
+        )
+    return language_voice_state_url(origin.stem, name)
+
+
+def _resolve_bundle_key(model: nn.Module, key: str):
+    parts = key.split(".")
+    if len(parts) < 2 or parts[-1].isdigit():
+        raise KeyError(key)
+    obj = model
+    for part in parts[:-1]:
+        if part.isdigit():
+            obj = obj[int(part)]
+        else:
+            obj = getattr(obj, part)
+    return obj, parts[-1]
+
+
+def _layout_bundle_weight(obj, param_name: str, value: mx.array) -> mx.array:
+    """Match the bundle walker conv layout: PyTorch `(out, in, k)` becomes MLX `(out, k, in)`."""
+    if param_name == "weight" and isinstance(obj, nn.Conv1d) and len(value.shape) == 3:
+        return mx.transpose(value, (0, 2, 1))
+    if (
+        param_name == "weight"
+        and (isinstance(obj, nn.ConvTranspose1d) or hasattr(obj, "is_conv_transpose"))
+        and len(value.shape) == 3
+    ):
+        if value.shape[1] == 1:
+            return mx.transpose(value, (0, 2, 1))
+        return mx.transpose(value, (1, 2, 0))
+    return value
+
+
+def assign_bundle_weights(model: nn.Module, weights: Dict[str, np.ndarray]) -> None:
+    """Place a fused bundle onto `model`. A skip is a failure."""
+    from mlx.utils import tree_flatten
+
+    transformed: Dict[str, mx.array] = {}
+    unplaceable: list[str] = []
+    for key, tensor in weights.items():
+        array = tensor
+        if getattr(array.dtype, "name", "") == "bfloat16":
+            array = array.astype("float32")
+        try:
+            obj, param_name = _resolve_bundle_key(model, key)
+            transformed[key] = _layout_bundle_weight(obj, param_name, mx.array(array))
+        except (KeyError, IndexError, AttributeError, TypeError):
+            unplaceable.append(key)
+    params = {name: value for name, value in tree_flatten(model.parameters())}
+    missing = sorted(set(params) - set(transformed))
+    unexpected = sorted(set(transformed) - set(params))
+    mismatched = sorted(
+        key
+        for key, value in transformed.items()
+        if key in params
+        and tuple(int(dim) for dim in value.shape) != tuple(int(dim) for dim in params[key].shape)
+    )
+    if unplaceable or missing or unexpected or mismatched:
+        raise ValueError(
+            "Bundle does not match the parameter tree: "
+            f"unplaceable={unplaceable}, missing={missing}, unexpected={unexpected}, "
+            f"shape_mismatch={mismatched}"
+        )
+    for key, value in transformed.items():
+        obj, param_name = _resolve_bundle_key(model, key)
+        setattr(obj, param_name, value)
+    logger.info("Loaded %d weights", len(transformed))
 
 VOICE_CLONING_UNSUPPORTED = (
     f"We could not download the weights for the model with voice cloning, "
@@ -72,7 +262,8 @@ class TTSModel(nn.Module):
 
     _TOKENS_PER_SECOND_ESTIMATE = 3.0
     _GEN_SECONDS_PADDING = 2.0
-    _MIMI_WARMUP_FRAMES = 1
+    _MIN_FRAMES_BEFORE_EOS = 6
+    _MIMI_WARMUP_FRAMES = 0
 
     def __init__(
         self,
@@ -86,6 +277,7 @@ class TTSModel(nn.Module):
         super().__init__()
         self.flow_lm = flow_lm
         self.temp = temp
+        self.sampler_decode_steps = lsd_decode_steps
         self.lsd_decode_steps = lsd_decode_steps
         self.noise_clamp = noise_clamp
         self.eos_threshold = eos_threshold
@@ -111,16 +303,22 @@ class TTSModel(nn.Module):
         return cls(flow_lm, temp, lsd_decode_steps, noise_clamp, eos_threshold, config)
 
     @classmethod
+    def _assemble(
+        cls, config: Config, temp: float, lsd_decode_steps: int, noise_clamp: Optional[float], eos_threshold
+    ):
+        """Build FlowLM, the speaker projection, and Mimi without loading weights."""
+        tts_model = cls._from_pydantic_config(config, temp, lsd_decode_steps, noise_clamp, eos_threshold)
+        tts_model.flow_lm.speaker_proj_weight = mx.zeros(
+            speaker_proj_shape(config), dtype=mx.float32
+        )
+        tts_model.mimi = build_mimi(config.mimi)
+        return tts_model
+
+    @classmethod
     def _from_pydantic_config_with_weights(
         cls, config: Config, temp: float, lsd_decode_steps: int, noise_clamp: Optional[float], eos_threshold
     ):
-        tts_model = cls._from_pydantic_config(config, temp, lsd_decode_steps, noise_clamp, eos_threshold)
-
-        # Initialize speaker projection weight for audio conditioning.
-        speaker_dim = config.mimi.inner_dim or config.mimi.seanet.dimension
-        tts_model.flow_lm.speaker_proj_weight = mx.zeros(
-            (config.flow_lm.transformer.d_model, speaker_dim), dtype=mx.float32
-        )
+        tts_model = cls._assemble(config, temp, lsd_decode_steps, noise_clamp, eos_threshold)
 
         if config.flow_lm.weights_path is not None:
             if config.mimi.weights_path is None:
@@ -132,28 +330,6 @@ class TTSModel(nn.Module):
                 download_if_necessary(config.flow_lm.weights_path)
             )
             load_weights_to_mlx_model(tts_model.flow_lm, state_dict_flowlm, strict=True)
-
-        # Build Mimi components from configuration.
-        mimi_config = config.mimi.model_dump()
-        encoder = SEANetEncoder(**mimi_config["seanet"])
-        decoder = SEANetDecoder(**mimi_config["seanet"])
-        encoder_transformer = ProjectedTransformer(**mimi_config["transformer"])
-        decoder_transformer = ProjectedTransformer(**mimi_config["transformer"])
-        quantizer = DummyQuantizer(**mimi_config["quantizer"])
-
-        tts_model.mimi = MimiModel(
-            encoder,
-            decoder,
-            quantizer,
-            channels=mimi_config["channels"],
-            inner_dim=mimi_config["inner_dim"],
-            outer_dim=mimi_config["outer_dim"],
-            sample_rate=mimi_config["sample_rate"],
-            frame_rate=mimi_config["frame_rate"],
-            encoder_frame_rate=mimi_config["sample_rate"] / encoder.hop_length,
-            encoder_transformer=encoder_transformer,
-            decoder_transformer=decoder_transformer,
-        )
 
         if config.mimi.weights_path is not None:
             if config.flow_lm.weights_path is None:
@@ -173,58 +349,10 @@ class TTSModel(nn.Module):
                 weights_file = download_if_necessary(config.weights_path_without_voice_cloning)
 
             weights = load_safetensors_to_numpy(weights_file)
-            loaded_count = 0
-            skipped_count = 0
-            for key, tensor in weights.items():
-                if getattr(tensor.dtype, "name", "") == "bfloat16":
-                    tensor = tensor.astype("float32")
-                mlx_array = mx.array(tensor)
-
-                # Resolve nested modules and assign parameters by name.
-                parts = key.split(".")
-                obj = tts_model
-                try:
-                    for part in parts[:-1]:
-                        if part.isdigit():
-                            obj = obj[int(part)]
-                        else:
-                            obj = getattr(obj, part)
-                    param_name = parts[-1]
-                    if param_name.isdigit():
-                        skipped_count += 1
-                        continue
-
-                    if param_name == "weight" and isinstance(obj, nn.Conv1d) and len(mlx_array.shape) == 3:
-                        # PyTorch Conv1d weight: (out, in, k) -> MLX: (out, k, in).
-                        mlx_array = mx.transpose(mlx_array, (0, 2, 1))
-                    elif param_name == "weight" and (
-                        isinstance(obj, nn.ConvTranspose1d) or hasattr(obj, "is_conv_transpose")
-                    ) and len(mlx_array.shape) == 3:
-                        # PyTorch ConvTranspose1d weight: (in, out, k)
-                        # MLX weight: (out, k, in/groups)
-                        if mlx_array.shape[1] == 1:
-                            mlx_array = mx.transpose(mlx_array, (0, 2, 1))
-                        else:
-                            mlx_array = mx.transpose(mlx_array, (1, 2, 0))
-
-                    setattr(obj, param_name, mlx_array)
-                    loaded_count += 1
-                except (KeyError, IndexError, AttributeError):
-                    skipped_count += 1
-                    continue
-
-            logger.info("Loaded %d weights, skipped %d", loaded_count, skipped_count)
+            assign_bundle_weights(tts_model, weights)
 
         if config.flow_lm.weights_path is None and config.weights_path is None:
             logger.warning("No weights_path specified, model is uninitialized!")
-
-        # Serialized v2 voice states can be returned without first calling
-        # init_states(), so bind every stateful module to its state key now.
-        for top_module in (tts_model.flow_lm, tts_model.mimi):
-            for module_name, module in top_module.named_modules():
-                if isinstance(module, StatefulModule):
-                    module._module_absolute_name = module_name
-
         size_in_mb = size_of_dict(tts_model.state_dict()) // 1e6 if hasattr(tts_model, "state_dict") else 0
         logging.info("TTS Model loaded successfully. Size ~%d MB", size_in_mb)
         return tts_model
@@ -232,26 +360,38 @@ class TTSModel(nn.Module):
     @classmethod
     def load_model(
         cls,
-        config: str | Path = DEFAULT_VARIANT,
+        config: str | Path | None = None,
         temp: float | int | None = None,
-        lsd_decode_steps: int = DEFAULT_LSD_DECODE_STEPS,
+        lsd_decode_steps: int | None = None,
         noise_clamp: float | int | None = DEFAULT_NOISE_CLAMP,
-        eos_threshold: float = DEFAULT_EOS_THRESHOLD,
+        eos_threshold: float | None = None,
+        *,
+        language: str | None = None,
+        sampler_decode_steps: int = DEFAULT_SAMPLER_DECODE_STEPS,
     ):
-        """Create and load a configured TTSModel with weights."""
-        if str(config).endswith((".yaml", ".yml")):
-            config_path = Path(config)
-            config = load_config(config_path)
-            logger.info("Loading model from config at %s...", config_path)
-        else:
-            config_path = Path(__file__).parents[1] / f"config/{config}.yaml"
-            config = load_config(config_path)
-        if temp is None:
-            temp = config.default_temperature
+        """Create and load a configured TTSModel with weights.
+
+        `config` stays the first positional argument, so `load_model("b6369a24")`
+        still selects that file. `language` is keyword-only. Passing both is an
+        error. Omitting both loads `english`. An omitted `temp` uses the config's
+        `default_temperature`.
+        """
+        requested = select_model_request(config, language)
+        sampler_steps = resolve_sampler_steps(sampler_decode_steps, lsd_decode_steps)
+        config_path = resolve_config_path(requested)
+        loaded = load_config(config_path)
+        temperature = resolve_temperature(temp, loaded.default_temperature)
+        if temperature < 0:
+            raise ValueError("temperature must be non-negative")
+        if sampler_steps < 1:
+            raise ValueError("sampler_decode_steps must be at least 1")
+        if eos_threshold is None:
+            eos_threshold = loaded.default_eos_threshold
+        logger.info("Loading model from config at %s...", config_path)
         tts_model = cls._from_pydantic_config_with_weights(
-            config, temp, lsd_decode_steps, noise_clamp, eos_threshold
+            loaded, temperature, sampler_steps, noise_clamp, eos_threshold
         )
-        tts_model.origin = config_path
+        tts_model.origin = config_path.resolve()
         return tts_model
 
     def _run_flow_lm_and_increment_step(
@@ -312,7 +452,7 @@ class TTSModel(nn.Module):
     def _encode_audio(self, audio: mx.array) -> mx.array:
         """Encode conditioning audio into FlowLM-compatible embeddings."""
         encoded = self.mimi.encode_to_latent(audio)
-        latents = mx.swapaxes(encoded, -1, -2).astype(mx.float32)
+        latents = encoded.astype(mx.float32)
         conditioning = mx.matmul(latents, self.flow_lm.speaker_proj_weight.T)
         return conditioning
 
@@ -357,11 +497,13 @@ class TTSModel(nn.Module):
         fade_in_ms: int = 0,
         warmup_frames: int = _MIMI_WARMUP_FRAMES,
         dictionary: UserDictionary | None = None,
-        language: str = "english",
+        language: str | None = None,
         temperature: float | None = None,
         seed: int | None = None,
         max_retries: int = 1,
         decode_batch_size: int = 1,
+        normalize: bool = False,
+        brighten: bool = False,
     ) -> mx.array:
         """Generate full audio, retrying attempts that never reach EOS.
 
@@ -372,6 +514,7 @@ class TTSModel(nn.Module):
         if max_retries < 0:
             raise ValueError("max_retries must be non-negative")
 
+        retry_state = copy.deepcopy(model_state) if not copy_state and max_retries else None
         audio_chunks = []
         for attempt in range(max_retries + 1):
             audio_chunks.clear()
@@ -394,6 +537,9 @@ class TTSModel(nn.Module):
                     audio_chunks.append(chunk)
                 break
             except GenerationDidNotReachEOS:
+                if retry_state is not None:
+                    model_state.clear()
+                    model_state.update(copy.deepcopy(retry_state))
                 if attempt >= max_retries:
                     raise
                 logger.warning(
@@ -404,6 +550,10 @@ class TTSModel(nn.Module):
 
         audio = mx.concatenate(audio_chunks, axis=0)
         audio = self._postprocess_audio_start(audio, trim_start_ms=trim_start_ms, fade_in_ms=fade_in_ms)
+        if brighten:
+            audio = mx.array(brighten_speech(np.array(audio), self.sample_rate))
+        if normalize:
+            audio = mx.array(normalize_loudness(np.array(audio), self.sample_rate))
         # Materialize the array so external np.array timing reflects generation cost.
         mx.eval(audio)
         return audio
@@ -417,13 +567,16 @@ class TTSModel(nn.Module):
         copy_state: bool = True,
         warmup_frames: int = _MIMI_WARMUP_FRAMES,
         dictionary: UserDictionary | None = None,
-        language: str = "english",
+        language: str | None = None,
         temperature: float | None = None,
         seed: int | None = None,
         decode_batch_size: int = 1,
         _raise_on_missing_eos: bool = False,
+        stop: Event | None = None,
     ) -> Generator[mx.array, None, None]:
         """Yield audio chunks as they are generated."""
+        if stop is not None and stop.is_set():
+            return
         if temperature is not None and temperature < 0:
             raise ValueError("temperature must be non-negative")
         if decode_batch_size < 1:
@@ -435,24 +588,28 @@ class TTSModel(nn.Module):
             frames_after_eos = self.config.model_recommended_frames_after_eos
 
         sampling_key = mx.random.key(seed) if seed is not None else None
+        if language is None:
+            origin = getattr(self, "origin", None)
+            language = origin.stem.split("_")[0] if origin is not None else "english"
+        prompt_kwargs = TTSModel._text_prompt_kwargs(self)
         chunks = split_into_best_sentences(
             self.flow_lm.conditioner.tokenizer,
             text_to_generate,
             max_tokens,
             dictionary=dictionary,
             language=language,
-            pad_with_spaces_for_short_inputs=self.config.pad_with_spaces_for_short_inputs,
-            remove_semicolons=self.config.remove_semicolons,
+            **prompt_kwargs,
         )
         for chunk in chunks:
+            if stop is not None and stop.is_set():
+                return
             chunk_key = None
             if sampling_key is not None:
                 split_keys = mx.random.split(sampling_key, 2)
                 sampling_key, chunk_key = split_keys[0], split_keys[1]
             text_to_generate, frames_after_eos_guess = prepare_text_prompt(
                 chunk,
-                pad_with_spaces_for_short_inputs=self.config.pad_with_spaces_for_short_inputs,
-                remove_semicolons=self.config.remove_semicolons,
+                **prompt_kwargs,
             )
             frames_after_eos_guess += 2
             effective_frames = (
@@ -468,7 +625,19 @@ class TTSModel(nn.Module):
                 sampling_key=chunk_key,
                 decode_batch_size=decode_batch_size,
                 raise_on_missing_eos=_raise_on_missing_eos,
+                stop=stop,
             )
+
+    def _text_prompt_kwargs(self) -> dict:
+        """Honor the loaded model's text conventions before tokenization."""
+        config = self.config
+        return {
+            "pad_with_spaces_for_short_inputs": config.pad_with_spaces_for_short_inputs,
+            "remove_semicolons": config.remove_semicolons,
+            "append_terminal_punctuation": getattr(config, "append_terminal_punctuation", True),
+            "capitalize_first_letter": getattr(config, "capitalize_first_letter", True),
+            "replace_characters": getattr(config, "replace_characters", {}),
+        }
 
     def _generate_audio_stream_short_text(
         self,
@@ -481,8 +650,11 @@ class TTSModel(nn.Module):
         sampling_key: Optional[mx.array] = None,
         decode_batch_size: int = 1,
         raise_on_missing_eos: bool = False,
+        stop: Event | None = None,
     ):
         """Generate audio for a short prompt with streaming FlowLM."""
+        if stop is not None and stop.is_set():
+            return
         if copy_state:
             model_state = copy.deepcopy(model_state)
 
@@ -493,7 +665,8 @@ class TTSModel(nn.Module):
         required_len = current_end + token_count + max_gen_len
         self._expand_kv_cache(model_state, sequence_length=required_len)
 
-        mimi_context = self.config.mimi.transformer.context
+        decoder_config = getattr(self.config.mimi, "decoder_transformer", None)
+        mimi_context = (decoder_config or self.config.mimi.transformer).context
         mimi_state = init_states(self.mimi, batch_size=1, sequence_length=mimi_context)
         self._warmup_mimi_decoder(mimi_state, warmup_frames)
 
@@ -524,17 +697,22 @@ class TTSModel(nn.Module):
         eos_step = None
         total_generated_samples = 0
         pending_latents = []
+        n_fade = self.config.mimi.sample_rate // 200
+        onset_fade = mx.linspace(0.0, 1.0, n_fade) if n_fade else None
 
         def decode_latents(latents):
             """Decode one or more completed FlowLM frames with Mimi."""
+            nonlocal onset_fade
             mimi_decoding_input = latents * self.flow_lm.emb_std + self.flow_lm.emb_mean
-            transposed = mx.transpose(mimi_decoding_input, (0, 2, 1))
-            quantized = self.mimi.quantizer(transposed)
-            audio_frame = self.mimi.decode_from_latent(quantized, mimi_state)
-            increment_steps(self.mimi, mimi_state, increment=16 * latents.shape[1])
-            return audio_frame[0, 0]
+            audio_frame = self.mimi.decode_from_latent(mimi_decoding_input, mimi_state)
+            increment_steps(self.mimi, mimi_state,
+                            increment=self._mimi_steps_per_latent() * latents.shape[1])
+            audio_chunk, onset_fade = apply_chunk_onset_fade(audio_frame[0, 0], onset_fade)
+            return audio_chunk
 
         for generation_step in range(max_gen_len):
+            if stop is not None and stop.is_set():
+                return
             with display_execution_time("Generating latent", print_output=False) as timer:
                 next_latent, is_eos = self._run_flow_lm_and_increment_step(
                     model_state=model_state,
@@ -550,8 +728,8 @@ class TTSModel(nn.Module):
                     # GPU synchronizations for every yielded frame.
                     mx.eval(is_eos, audio_chunk)
                     is_eos_scalar = bool(is_eos.item())
-                    if is_eos_scalar and eos_step is None:
-                        eos_step = generation_step
+                    eos_step = note_eos_step(is_eos_scalar, generation_step, eos_step,
+                                             self._MIN_FRAMES_BEFORE_EOS)
                     if eos_step is not None and generation_step >= eos_step + frames_after_eos:
                         break
 
@@ -562,8 +740,8 @@ class TTSModel(nn.Module):
                     # next step. Mimi can then decode completed latents in groups.
                     mx.eval(is_eos, next_latent)
                     is_eos_scalar = bool(is_eos.item())
-                    if is_eos_scalar and eos_step is None:
-                        eos_step = generation_step
+                    eos_step = note_eos_step(is_eos_scalar, generation_step, eos_step,
+                                             self._MIN_FRAMES_BEFORE_EOS)
                     if eos_step is not None and generation_step >= eos_step + frames_after_eos:
                         break
 
@@ -603,6 +781,9 @@ class TTSModel(nn.Module):
             if raise_on_missing_eos:
                 raise GenerationDidNotReachEOS(message)
 
+    def _mimi_steps_per_latent(self) -> int:
+        return mimi_steps_per_latent(self.mimi.encoder_frame_rate, self.mimi.frame_rate)
+
     def _estimate_max_gen_len(self, token_count: int) -> int:
         """Estimate max generation frames from token count."""
         gen_len_sec = token_count / self._TOKENS_PER_SECOND_ESTIMATE + self._GEN_SECONDS_PADDING
@@ -635,11 +816,9 @@ class TTSModel(nn.Module):
         zero_latent = mx.zeros((1, 1, self.flow_lm.ldim), dtype=self.flow_lm.dtype)
         for _ in range(warmup_frames):
             mimi_decoding_input = zero_latent * self.flow_lm.emb_std + self.flow_lm.emb_mean
-            transposed = mx.transpose(mimi_decoding_input, (0, 2, 1))
-            quantized = self.mimi.quantizer(transposed)
-            audio_frame = self.mimi.decode_from_latent(quantized, mimi_state)
+            audio_frame = self.mimi.decode_from_latent(mimi_decoding_input, mimi_state)
             mx.eval(audio_frame)
-            increment_steps(self.mimi, mimi_state, increment=16)
+            increment_steps(self.mimi, mimi_state, increment=self._mimi_steps_per_latent())
 
     @lru_cache(maxsize=2)
     def _cached_get_state_for_audio_prompt(
@@ -647,27 +826,28 @@ class TTSModel(nn.Module):
     ) -> Dict:
         return self.get_state_for_audio_prompt(audio_conditioning, truncate)
 
+    def _flow_state_modules(self) -> set[str]:
+        """Module names a voice state is allowed to fill."""
+        return set(init_states(self.flow_lm, batch_size=1, sequence_length=1))
+
     def get_state_for_audio_prompt(
         self, audio_conditioning: Union[Path, str, mx.array], truncate: bool = False
     ) -> Dict:
-        if isinstance(audio_conditioning, (str, Path)) and _is_safetensors_source(
-            audio_conditioning
-        ):
-            if isinstance(audio_conditioning, str):
-                audio_conditioning = download_if_necessary(audio_conditioning)
-            tensors = load_safetensors_to_numpy(audio_conditioning)
-            if any("/" in key for key in tensors):
-                return load_model_state_mlx(audio_conditioning)
-            prompt_tensor = tensors.get("audio_prompt")
-            if prompt_tensor is None:
-                raise KeyError("Expected serialized model state or audio_prompt tensor")
-            prompt = mx.array(prompt_tensor)
-        elif isinstance(audio_conditioning, str) and audio_conditioning in PREDEFINED_VOICES:
-            variant = self.origin.stem if self.origin is not None else DEFAULT_VARIANT
-            if variant in {"english_2026-04", "english_2026-04_24l"}:
-                state_uri = get_predefined_voice_state_uri(variant, audio_conditioning)
-                return load_model_state_mlx(download_if_necessary(state_uri))
-            prompt = load_predefined_voice_mlx(audio_conditioning)
+        if isinstance(audio_conditioning, (str, Path)) and is_safetensors_source(audio_conditioning):
+            source = audio_conditioning
+            if isinstance(source, str):
+                source = download_if_necessary(source)
+            return import_flow_state(source, self._flow_state_modules())
+
+        prompt = None
+        if isinstance(audio_conditioning, str) and audio_conditioning in PREDEFINED_VOICE_NAMES:
+            source = predefined_voice_source(self.origin, audio_conditioning)
+            if source == "legacy":
+                prompt = load_predefined_voice_mlx(audio_conditioning)
+            else:
+                return import_flow_state(
+                    download_if_necessary(source), self._flow_state_modules()
+                )
         else:
             if not self.has_voice_cloning and isinstance(audio_conditioning, (str, Path)):
                 raise ValueError(VOICE_CLONING_UNSUPPORTED)
@@ -686,11 +866,13 @@ class TTSModel(nn.Module):
                     audio, conditioning_sample_rate, self.config.mimi.sample_rate, 1
                 )
 
+            audio_conditioning = end_on_pause(
+                np.asarray(audio_conditioning), self.config.mimi.sample_rate
+            )
             with display_execution_time("Encoding audio prompt"):
                 prompt = self._encode_audio(mx.array(audio_conditioning)[None, ...])
-
-        if self.flow_lm.insert_bos_before_voice:
-            prompt = mx.concatenate([self.flow_lm.bos_before_voice, prompt], axis=1)
+            if self.flow_lm.insert_bos_before_voice:
+                prompt = prepend_voice_bos(prompt, self.flow_lm.bos_before_voice, True)
 
         model_state = init_states(self.flow_lm, batch_size=1, sequence_length=prompt.shape[1])
         with display_execution_time("Prompting audio"):
@@ -701,152 +883,3 @@ class TTSModel(nn.Module):
             size_of_dict(model_state) // 1e6,
         )
         return model_state
-
-
-def _is_safetensors_source(source: str | Path) -> bool:
-    """Recognize local and remote safetensors paths with revisions or queries."""
-    source_text = str(source)
-    if source_text.startswith(("http://", "https://")):
-        source_text = urlsplit(source_text).path
-    elif source_text.startswith("hf://"):
-        source_text = source_text.rsplit("@", 1)[0]
-    return source_text.endswith(".safetensors")
-
-
-def _find_boundary_indices(list_of_tokens: list[int], boundary_tokens: list[int]) -> list[int]:
-    """Return segment boundaries immediately after runs of delimiter tokens."""
-    boundary_indices = [0]
-    previous_was_boundary = False
-
-    for token_idx, token in enumerate(list_of_tokens):
-        if token in boundary_tokens:
-            previous_was_boundary = True
-        elif previous_was_boundary:
-            boundary_indices.append(token_idx)
-            previous_was_boundary = False
-
-    boundary_indices.append(len(list_of_tokens))
-    return boundary_indices
-
-
-def _segments_from_boundaries(
-    list_of_tokens: list[int], boundary_indices: list[int], tokenizer
-) -> list[tuple[int, str]]:
-    """Decode token segments between boundary indices."""
-    segments = []
-    for i in range(len(boundary_indices) - 1):
-        start = boundary_indices[i]
-        end = boundary_indices[i + 1]
-        text = tokenizer.sp.decode(list_of_tokens[start:end])
-        segments.append((end - start, text))
-    return segments
-
-
-def split_into_best_sentences(
-    tokenizer,
-    text_to_generate: str,
-    max_tokens: int,
-    dictionary: UserDictionary | None = None,
-    language: str = "english",
-    pad_with_spaces_for_short_inputs: bool = True,
-    remove_semicolons: bool = False,
-) -> list[str]:
-    text_to_generate, _ = prepare_text_prompt(
-        text_to_generate,
-        pad_with_spaces_for_short_inputs=pad_with_spaces_for_short_inputs,
-        remove_semicolons=remove_semicolons,
-    )
-    text_to_generate = normalize_text(
-        text_to_generate, language=language, dictionary=dictionary
-    )
-    text_to_generate = text_to_generate.strip()
-    tokens = tokenizer(text_to_generate)
-    list_of_tokens = tokens.tokens[0].tolist()
-
-    _, *end_of_sentence_tokens = tokenizer(".!...?").tokens[0].tolist()
-
-    sentence_boundaries = _find_boundary_indices(list_of_tokens, end_of_sentence_tokens)
-    nb_tokens_and_sentences = _segments_from_boundaries(
-        list_of_tokens, sentence_boundaries, tokenizer
-    )
-
-    # A single sentence can exceed max_tokens and previously bypassed chunking
-    # entirely. Split such sentences at natural clause boundaries before packing
-    # them into chunks. This mirrors the upstream pocket-tts behavior.
-    _, *fallback_tokens = tokenizer(",;:").tokens[0].tolist()
-    refined_segments = []
-    for nb_tokens, text in nb_tokens_and_sentences:
-        if nb_tokens <= max_tokens:
-            refined_segments.append((nb_tokens, text))
-            continue
-
-        sub_tokens = tokenizer(text.strip()).tokens[0].tolist()
-        sub_boundaries = _find_boundary_indices(sub_tokens, fallback_tokens)
-        sub_segments = _segments_from_boundaries(sub_tokens, sub_boundaries, tokenizer)
-        if len(sub_segments) > 1:
-            refined_segments.extend(sub_segments)
-        else:
-            refined_segments.append((nb_tokens, text))
-
-    max_nb_tokens_in_a_chunk = max_tokens
-    chunks = []
-    current_chunk = ""
-    current_nb_of_tokens_in_chunk = 0
-
-    for nb_tokens, sentence in refined_segments:
-        if current_chunk == "":
-            current_chunk = sentence
-            current_nb_of_tokens_in_chunk = nb_tokens
-            continue
-
-        if current_nb_of_tokens_in_chunk + nb_tokens > max_nb_tokens_in_a_chunk:
-            chunks.append(current_chunk.strip())
-            current_chunk = sentence
-            current_nb_of_tokens_in_chunk = nb_tokens
-        else:
-            current_chunk += " " + sentence
-            current_nb_of_tokens_in_chunk += nb_tokens
-
-    if current_chunk != "":
-        chunks.append(current_chunk.strip())
-
-    for chunk in chunks:
-        chunk_tokens = tokenizer(chunk.strip()).tokens[0].tolist()
-        if len(chunk_tokens) > max_tokens:
-            logger.warning(
-                "Chunk has %d tokens (max %d), generation may skip words: '%.50s...'",
-                len(chunk_tokens),
-                max_tokens,
-                chunk,
-            )
-    return chunks
-
-
-def prepare_text_prompt(
-    text: str,
-    pad_with_spaces_for_short_inputs: bool = True,
-    remove_semicolons: bool = False,
-) -> tuple[str, int]:
-    text = text.strip()
-    if text == "":
-        raise ValueError("Text prompt cannot be empty")
-    text = text.replace("\n", " ").replace("\r", " ").replace("  ", " ")
-    if remove_semicolons:
-        text = text.replace(";", ",")
-    number_of_words = len(text.split())
-
-    if number_of_words <= 4:
-        frames_after_eos_guess = 3
-    else:
-        frames_after_eos_guess = 1
-
-    if not text[0].isupper():
-        text = text[0].upper() + text[1:]
-
-    if text[-1].isalnum():
-        text = text + "."
-
-    if pad_with_spaces_for_short_inputs and len(text.split()) < 5:
-        text = " " * 8 + text
-
-    return text, frames_after_eos_guess

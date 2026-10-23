@@ -32,6 +32,21 @@ class _RetryHarness:
 
 
 class BufferedRecoveryTests(unittest.TestCase):
+    def test_inplace_retry_restores_the_original_prompt_state(self):
+        starts = []
+
+        class Harness(_RetryHarness):
+            def generate_audio_stream(self, **kwargs):
+                state = kwargs["model_state"]
+                starts.append(state["position"])
+                state["position"] += 10
+                yield from super().generate_audio_stream(**kwargs)
+
+        state = {"position": 3}
+        Harness(1).generate_audio(state, "Hello.", copy_state=False)
+        self.assertEqual(starts, [3, 3])
+        self.assertEqual(state["position"], 13)
+
     def test_discards_failed_attempt_and_retries_with_fresh_seed(self):
         harness = _RetryHarness(failures_before_success=1)
 

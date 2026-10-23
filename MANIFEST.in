@@ -1,0 +1,5 @@
+prune tests
+prune koder
+prune build
+prune dist
+global-exclude *.pyc

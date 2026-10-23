@@ -4,37 +4,28 @@ MLX backend for [pocket-tts](https://github.com/kyutai-labs/pocket-tts) optimize
 
 Runtime is torch-free. Torch is only required for optional parity tests.
 
-**Current Development (`Unreleased`)**
+**Current Development (`0.3.1.dev0`, unreleased)**
 
-- Uses the April 2026 six-layer English model by default, with its recommended
-  sampling temperature of `0.3`.
-- Adds the upstream 24-layer English checkpoint as an opt-in model.
-- Ports upstream prompt preparation, WAV handling, and remote asset fixes.
-- Adds macOS ARM continuous integration.
-
-**What's New in 0.2.1**
-
-- Cleaner audio onset with `--warmup-frames`, `--trim-start-ms`, and `--fade-in-ms`.
-- Upstream-aligned KV-cache sizing for better memory/runtime behavior.
-- Lower perceived overhead after `generate_audio()` by materializing chunks before return.
-- Release: [PyPI 0.2.1](https://pypi.org/project/pocket-tts-mlx/0.2.1/) · [GitHub v0.2.1](https://github.com/jishnuvenugopal/pocket-tts-mlx/releases/tag/v0.2.1)
+- Aligned with MLX upstream `v0.3.0` and Kyutai inference changes through
+  [`44cb63e`](https://github.com/kyutai-labs/pocket-tts/commit/44cb63eaa4144f32ff80863968515165a5554353)
+  (October 22, 2026).
+- Defaults to the October 2026 English checkpoint at temperature `0.3`.
+- Supports English, French, German, Dutch, Italian, Portuguese, and Spanish,
+  24-layer previews, drifting, and the six October small English models.
+- Retains pronunciation dictionaries, per-request temperature and seed controls,
+  buffered missing-EOS recovery, batched decoding, and fused MLX kernels.
+- Includes opt-in output normalization/brightening, strict weight validation,
+  model-specific text preparation, and cancellable synchronous streaming.
 
 **Relationship to pocket-tts**
 
-This repository is an independent MLX port, not a wrapper around a local
-`pocket-tts` checkout. Keeping the repositories next to each other on disk does
-not connect them, and updating `pocket-tts` does not change this package.
+This is an independent MLX port. Updating an adjacent `pocket-tts` checkout
+changes neither this package nor its pinned models. Upstream changes are
+reviewed and ported deliberately; PyTorch is an optional development dependency.
+The runtime does not import `pocket_tts` or Torch.
 
-The runtime implementation, configuration, and tests live in this repository.
-`pocket-tts` appears only in the optional `dev` dependency group for parity
-testing; it is not imported or installed by a normal `pocket-tts-mlx` install.
-Upstream changes must therefore be reviewed and ported deliberately.
-
-Recent manual ports include:
-
-- [Prompt, WAV, and remote asset fixes](https://github.com/kyutai-labs/pocket-tts/pull/210)
-- [English sampling-temperature evaluation](https://github.com/kyutai-labs/pocket-tts/pull/223)
-- [The 24-layer English checkpoint](https://github.com/kyutai-labs/pocket-tts/pull/245)
+See [the upstream alignment record](koder/docs/upstream-alignment.md) for the
+source snapshots, retained fork features, validation, and scope.
 
 **Installation**
 
@@ -115,52 +106,35 @@ integer only when an explicit override is needed.
 
 **Model Selection**
 
-| Model | Role | Default temperature |
+| Model/config | Role | Default temperature |
 | --- | --- | ---: |
-| `english_2026-04` | Recommended six-layer default | `0.3` |
-| `english_2026-04_24l` | Opt-in 24-layer quality comparison | `0.3` |
-| `b6369a24` | Legacy comparison and rollback | `0.7` |
-
-The April 2026 English checkpoint is the default:
+| `english` / `english_2026-10` | October English default | `0.3` |
+| `english_2m_2026-10`, `english_7m_2026-10`, `english_18m_2026-10` | Small English models | `0.3` |
+| `english_2m_refl_2026-10`, `english_7m_refl_2026-10`, `english_18m_refl_2026-10` | Reflect-padding small models | `0.3` |
+| `french`, `german`, `dutch`, `italian`, `portuguese`, `spanish` | Other languages | `0.3` |
+| `english_drifting_26-09` | September one-step drifting model | `0.3` |
+| `english_2026-04`, `english_2026-04_24l`, `english_2026-09_24l` | Historical and quality comparisons | `0.3` |
+| `b6369a24` | Original model; pass `--temperature 0.7` for its old setting | `0.3` |
 
 ```bash
 pocket-tts-mlx "Hello, world!"
-```
-
-Use the legacy checkpoint explicitly when comparison or rollback is needed:
-
-```bash
-pocket-tts-mlx "Hello, world!" --model b6369a24
-```
-
-In Python, `TTSModel.load_model()` uses `english_2026-04`; pass
-`TTSModel.load_model("b6369a24")` for the legacy model.
-
-An experimental 24-layer English checkpoint is available as an opt-in quality
-comparison. It is substantially larger and slower than the default model:
-
-```bash
+pocket-tts-mlx "Bonjour le monde." --language french
+pocket-tts-mlx "Hello from a small model." --model english_2m_2026-10
 pocket-tts-mlx "Hello, world!" --model english_2026-04_24l
 ```
 
-In Python, use `TTSModel.load_model("english_2026-04_24l")`. The six-layer
-`english_2026-04` checkpoint remains the default.
+`--config` and the backward-compatible `--model` alias select a shipped config
+stem, local YAML, or remote YAML. They cannot be combined with `--language`.
+`--eos-threshold` overrides the model's recommendation (`-1.0` for the small
+models; `-4.0` otherwise). `--sampler-decode-steps` controls the sampler;
+flow-matching configs generally need at least 16 steps, while LSD, drifting,
+and pointwise configs use one.
 
-Local validation on a 32 GB Apple Silicon Mac produced the following results.
-Generation time is the median of three post-load runs and excludes initial
-download and model-loading time. The generated utterances had different
-durations, so these measurements show practical resource cost rather than a
-controlled model-quality comparison.
-
-| Model | Peak memory | Median generation | Generated audio | Real-time speed |
-| --- | ---: | ---: | ---: | ---: |
-| Six-layer | 1.04 GiB | 0.301 s | 2.40 s | 8.29x |
-| 24-layer | 2.39 GiB | 0.702 s | 3.44 s | 4.92x |
-
-Both models generated finite audio faster than real time. The 24-layer model
-loaded its matching weights and predefined voice state successfully, but its
-quality benefit should be judged with a listening evaluation before making it
-the default.
+In Python, `TTSModel.load_model()` selects `english`;
+`TTSModel.load_model(language="french")` selects French.
+Passing a config as the first positional argument remains supported.
+The old `lsd_decode_steps` keyword is retained as a deprecated alias for
+`sampler_decode_steps`.
 
 For faster offline generation, batch completed latent frames through the Mimi
 decoder (four is a good starting point):
@@ -220,7 +194,11 @@ of `1` unless throughput matters more than first-audio latency.
 
 **Voices**
 
-Predefined voices:
+The CLI chooses a voice for the selected language: `alba` (English), `estelle`
+(French), `juergen` (German), `daan` (Dutch), `giovanni` (Italian), `rafael`
+(Portuguese), and `lola` (Spanish). All current language configs support the
+upstream 27-name voice catalog; the original `b6369a24` catalog has eight names:
+
 
 - alba
 - marius
@@ -245,9 +223,32 @@ Predefined voices:
 - Model weights and predefined voice states are downloaded and cached on first use.
 - Updating an adjacent source checkout of `pocket-tts` does not update this package.
 
+**Development and Validation**
+
+```bash
+uv pip install --python .venv/bin/python -e . pytest
+.venv/bin/python -m pytest -q
+POCKET_TTS_RUN_INTEGRATION=1 .venv/bin/python -m pytest -q tests/test_speech.py
+```
+
+The regular suite runs without network access. Integration tests download
+pinned weights and exercise real generation. The raw reference-voice test
+requires access to the gated voice-cloning weights.
+
+Streaming stays on the calling thread. Set a `threading.Event` passed as
+`generate_audio_stream(..., stop=event)` to cancel, or close the generator.
+Use separate model instances for concurrent generation.
+
+Use `--normalize` to bring quiet speech to about -18 dBFS with peaks below
+-1 dBFS, and `--brighten` for a +10 dB high shelf at 1.5 kHz. Both are off by
+default. Python equivalents are `generate_audio(normalize=True, brighten=True)`.
+Serialized voice `.safetensors` files can be supplied as local paths, `hf://`
+paths, or HTTP(S) URLs.
+
 **Release Notes**
 
-- Latest: [`v0.2.1`](https://pypi.org/project/pocket-tts-mlx/0.2.1/)
+- This fork is an unreleased development build.
+- MLX upstream: [`v0.3.0`](https://github.com/jishnuvenugopal/pocket-tts-mlx/releases/tag/v0.3.0)
 - Full history: [`CHANGELOG.md`](CHANGELOG.md)
 - Recommended clean-onset preset:
 

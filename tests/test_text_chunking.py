@@ -36,7 +36,7 @@ class _CharacterTokenizer:
             token = self._special.get(char, ord(char))
             ids.append(token)
             self._decoded[token] = char
-        return _Tokens(_TokenMatrix([_TokenRow(ids)]))
+        return _TokenMatrix([_TokenRow(ids)])
 
     def decode(self, tokens):
         return "".join(self._decoded.get(token, "") for token in tokens if token != 999)
@@ -52,7 +52,7 @@ class TextChunkingTests(unittest.TestCase):
         self.assertGreater(len(chunks), 1)
         self.assertEqual(" ".join(chunks).replace("  ", " "), text)
         self.assertTrue(
-            all(len(tokenizer(chunk).tokens[0].tolist()) <= 25 for chunk in chunks)
+            all(len(tokenizer(chunk)[0].tolist()) <= 25 for chunk in chunks)
         )
 
     def test_short_sentence_is_not_split_at_commas(self):
@@ -81,7 +81,7 @@ class TextChunkingTests(unittest.TestCase):
             dictionary=dictionary,
         )
 
-        self.assertEqual(chunks, ["em el ex is fast."])
+        self.assertEqual(chunks, ["Em el ex is fast."])
 
 
 if __name__ == "__main__":

@@ -10,7 +10,7 @@ from pocket_tts_mlx.models.tts_model import TTSModel
 class _MimiEncoder:
     def encode_to_latent(self, audio):
         del audio
-        return mx.array([[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]])
+        return mx.array([[[1.0, 4.0], [2.0, 5.0], [3.0, 6.0]]])
 
 
 class _VoiceCloningHarness:
@@ -22,7 +22,7 @@ class _VoiceCloningHarness:
 
 
 class VoiceCloningTests(unittest.TestCase):
-    def test_encode_audio_swaps_latent_time_and_channel_axes(self):
+    def test_encode_audio_preserves_mimi_batch_time_channel_layout(self):
         conditioning = _VoiceCloningHarness()._encode_audio(mx.zeros((1, 1, 4)))
 
         np.testing.assert_array_equal(

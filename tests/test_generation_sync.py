@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from threading import Event
 import unittest
 from unittest.mock import patch
 
@@ -34,10 +35,16 @@ class _Mimi(nn.Module):
     def decode_from_latent(self, latent, state):
         del state
         self.decode_calls += 1
-        return mx.repeat(latent[:, :1, :], 4, axis=-1)
+        return mx.repeat(latent[:, :, 0], 4, axis=-1)[:, None, :]
 
 
 class _GenerationHarness:
+    # Small deterministic harnesses exercise timing/RNG independently of EOS gating.
+    _MIN_FRAMES_BEFORE_EOS = 0
+
+    def _mimi_steps_per_latent(self):
+        return 16
+
     _generate_audio_stream_short_text = TTSModel._generate_audio_stream_short_text
 
     def __init__(self):
@@ -86,6 +93,22 @@ class _GenerationHarness:
 
 
 class GenerationSynchronizationTests(unittest.TestCase):
+    def test_cancellation_stops_before_another_model_step(self):
+        harness = _GenerationHarness()
+        stop = Event()
+        stream = harness._generate_audio_stream_short_text(
+            {}, "Hello.", frames_after_eos=1, copy_state=False, warmup_frames=0, stop=stop)
+        next(stream)
+        generated = harness._generation_call
+        stop.set()
+        self.assertEqual(list(stream), [])
+        self.assertEqual(harness._generation_call, generated)
+
+    def test_already_cancelled_stream_does_not_touch_the_model(self):
+        stop = Event()
+        stop.set()
+        self.assertEqual(list(TTSModel.generate_audio_stream(object(), {}, "Hello.", stop=stop)), [])
+
     def test_eos_and_audio_share_one_eval_per_generation_step(self):
         harness = _GenerationHarness()
         real_eval = mx.eval

@@ -137,7 +137,6 @@ class SimpleMLPAdaLN(nn.Module):
         self.num_res_blocks = num_res_blocks
         self.num_time_conds = num_time_conds
 
-        assert num_time_conds != 1
         self.time_embed = [TimestepEmbedder(model_channels) for _ in range(num_time_conds)]
         self.cond_embed = nn.Linear(cond_channels, model_channels)
         self.input_proj = nn.Linear(in_channels, model_channels)
@@ -150,19 +149,36 @@ class SimpleMLPAdaLN(nn.Module):
         config = cfg.flow
         flow_dim = config.dim
         flow_depth = config.depth
-        num_time_conds = 2
+        if config.type == "lsd":
+            num_time_conds = 2
+        elif config.type == "flow_matching":
+            num_time_conds = 1
+        elif config.type in ("drifting", "pointwise"):
+            num_time_conds = 0
+        else:
+            raise ValueError(f"Unknown flow type: {config.type}")
         return SimpleMLPAdaLN(
             latent_dim, flow_dim, latent_dim, cond_dim, flow_depth, num_time_conds=num_time_conds
         )
 
-    def __call__(self, c: mx.array, s: mx.array, t: mx.array, x: mx.array) -> mx.array:
-        ts = [s, t]
+    def __call__(self, c: mx.array, *args: mx.array) -> mx.array:
+        """Apply the flow head.
+
+        `args` is `num_time_conds` time tensors, then the latent `x`. LSD passes
+        two times, flow matching one, and drifting none.
+        """
+        ts, x = args[:-1], args[-1]
+        if len(ts) != self.num_time_conds:
+            raise ValueError(
+                f"Expected {self.num_time_conds} time conditions, got {len(ts)}"
+            )
         x = self.input_proj(x)
-        t_combined = (
-            sum(self.time_embed[i](ts[i]) for i in range(self.num_time_conds)) / self.num_time_conds
-        )
-        c = self.cond_embed(c)
-        y = t_combined + c
+        y = self.cond_embed(c)
+        if self.num_time_conds:
+            t_combined = self.time_embed[0](ts[0])
+            for index in range(1, self.num_time_conds):
+                t_combined = t_combined + self.time_embed[index](ts[index])
+            y = y + t_combined / self.num_time_conds
         for block in self.res_blocks:
             x = block(x, y)
         return self.final_layer(x, y)

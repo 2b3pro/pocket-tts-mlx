@@ -51,6 +51,7 @@ DECIMAL_WORD: dict[str, str] = {
     "english": "point",
     "french": "virgule",
     "french_24l": "virgule",
+    "dutch": "komma",
     "german": "Komma",
     "german_24l": "Komma",
     "spanish": "coma",

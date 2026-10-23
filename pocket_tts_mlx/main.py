@@ -11,12 +11,17 @@ import soundfile as sf
 
 from pocket_tts_mlx import TTSModel
 from pocket_tts_mlx.default_parameters import (
-    DEFAULT_VARIANT,
+    DEFAULT_SAMPLER_DECODE_STEPS,
     MAX_TOKEN_PER_CHUNK,
+    get_default_voice_for_language,
 )
+from pocket_tts_mlx.models.tts_model import is_shipped_config, resolve_config_path
+
 from pocket_tts_mlx.text_normalization import UserDictionary
 
 logger = logging.getLogger(__name__)
+
+
 
 DEFAULT_DICTIONARY_DIR = Path(
     os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))
@@ -47,46 +52,78 @@ def _resolve_dictionary(explicit_path: str | None) -> UserDictionary | None:
     return None
 
 
+def read_cli_text(text: str) -> str:
+    """Return `text`, or stdin when the caller passes `-`."""
+    if text == "-":
+        return sys.stdin.read()
+    return text
+
+
+def cli_voice(voice: str | None, language: str | None, config: str | None) -> str:
+    """Default voice follows the language. A custom config clones Alba's recording."""
+    if voice is not None:
+        return voice
+    language_for_voice = language
+    custom_config = False
+    if config is not None:
+        origin = resolve_config_path(config)
+        custom_config = not is_shipped_config(origin)
+        if not custom_config:
+            language_for_voice = origin.stem
+    return get_default_voice_for_language(language_for_voice, custom_config=custom_config)
+
+
 def main() -> int:
     """Parse CLI arguments, run TTS, and write WAV output."""
     parser = argparse.ArgumentParser(
         description="Generate speech from text using pocket-tts with MLX backend"
     )
-    parser.add_argument("text", help="Text to convert to speech")
-    parser.add_argument("--voice", "-v", default="marius", help="Voice name (default: marius)")
+    parser.add_argument("text", help="Text to convert to speech. Use - to read stdin.")
     parser.add_argument(
-        "--model",
-        default=DEFAULT_VARIANT,
-        help=f"Bundled model variant or local YAML config (default: {DEFAULT_VARIANT})",
-    )
-    parser.add_argument("--output", "-o", default="output.wav", help="Output WAV file")
-    parser.add_argument(
-        "--max-tokens", type=int, default=MAX_TOKEN_PER_CHUNK, help="Max tokens per chunk"
-    )
-    parser.add_argument(
-        "--frames-after-eos",
-        type=int,
+        "--voice",
+        "-v",
         default=None,
-        help="Frames after EOS (default: model/text recommendation)",
+        help=(
+            "Voice name, audio file, or voice-state safetensors. "
+            "Defaults from the language: estelle (french), giovanni (italian), "
+            "juergen (german), lola (spanish), rafael (portuguese), daan (dutch), "
+            "otherwise alba."
+        ),
+    )
+    parser.add_argument(
+        "--language",
+        default=None,
+        help="Shipped language config stem, such as english or french. Incompatible with --config.",
+    )
+    parser.add_argument(
+        "--config", "--model",
+        default=None,
+        help="Path to a model config YAML. Incompatible with --language.",
     )
     parser.add_argument(
         "--temperature",
         type=float,
         default=None,
-        help="Sampling temperature (default: model recommendation)",
-    )
-    parser.add_argument("--seed", type=int, default=None, help="Deterministic generation seed")
-    parser.add_argument(
-        "--max-retries",
-        type=int,
-        default=1,
-        help="Retries when buffered generation reaches its safety limit without EOS",
+        help="Sampling temperature. Defaults to the value in the model config (0.3).",
     )
     parser.add_argument(
-        "--decode-batch-size",
+        "--sampler-decode-steps",
         type=int,
-        default=1,
-        help="Mimi frames per buffered decode (try 4 for faster offline generation)",
+        default=DEFAULT_SAMPLER_DECODE_STEPS,
+        help="Sampler steps. Drifting and LSD use 1.",
+    )
+    parser.add_argument("--output", "-o", default="output.wav", help="Output WAV file")
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=MAX_TOKEN_PER_CHUNK,
+        help="Max tokens per chunk",
+    )
+    parser.add_argument(
+        "--frames-after-eos",
+        type=int,
+        default=None,
+        help="Frames after EOS. Unset uses the config recommendation, then a text guess.",
     )
     parser.add_argument(
         "--trim-start-ms",
@@ -103,17 +140,28 @@ def main() -> int:
     parser.add_argument(
         "--warmup-frames",
         type=int,
-        default=1,
-        help="Number of initial Mimi frames to decode and discard for cleaner onset",
+        default=0,
+        help="Number of initial Mimi frames to decode and discard",
     )
     parser.add_argument(
-        "--dictionary",
-        default=None,
-        help=(
-            "Pronunciation dictionary (.yaml/.yml/.json). If omitted, load "
-            "~/.config/pocket-tts/dictionary.* when present; pass an empty string to disable."
-        ),
+        "--normalize",
+        action="store_true",
+        help="Scale the output to about -18 dBFS speech level, peaks under -1 dBFS. Off by default.",
     )
+    parser.add_argument(
+        "--brighten",
+        action="store_true",
+        help="Add a +10 dB high shelf at 1.5 kHz for dark voices such as french estelle. Off by default.",
+    )
+    parser.add_argument("--seed", type=int, default=None, help="Deterministic generation seed")
+    parser.add_argument("--max-retries", type=int, default=1,
+                        help="Retries for buffered generations that fail to reach EOS")
+    parser.add_argument("--decode-batch-size", type=int, default=1,
+                        help="Completed Mimi frames per buffered decode (try 4)")
+    parser.add_argument("--eos-threshold", type=float, default=None,
+                        help="EOS threshold (default: model recommendation)")
+    parser.add_argument("--dictionary", default=None,
+                        help="Pronunciation dictionary; empty disables automatic loading")
     parser.add_argument("--verbose", "-V", action="store_true", help="Verbose logging")
 
     args = parser.parse_args()
@@ -124,24 +172,38 @@ def main() -> int:
     )
 
     try:
-        logger.info("Loading MLX model...")
-        model = TTSModel.load_model(config=args.model, temp=args.temperature)
+        text = read_cli_text(args.text)
+        if not text.strip():
+            logger.error("No input text.")
+            return 1
+        if args.language is not None and args.config is not None:
+            raise ValueError("Cannot specify both config and language, please choose one or the other.")
 
-        logger.info("Loading voice: %s", args.voice)
-        model_state = model.get_state_for_audio_prompt(args.voice)
-        dictionary = _resolve_dictionary(args.dictionary)
+        logger.info("Loading MLX model...")
+        model = TTSModel.load_model(
+            config=args.config,
+            language=args.language,
+            temp=args.temperature,
+            sampler_decode_steps=args.sampler_decode_steps,
+            eos_threshold=args.eos_threshold,
+        )
+        voice = cli_voice(args.voice, args.language, args.config)
+
+        logger.info("Loading voice: %s", voice)
+        model_state = model.get_state_for_audio_prompt(voice)
 
         logger.info("Generating audio...")
         audio = model.generate_audio(
             model_state=model_state,
-            text_to_generate=args.text,
+            text_to_generate=text,
             max_tokens=args.max_tokens,
             frames_after_eos=args.frames_after_eos,
             trim_start_ms=args.trim_start_ms,
             fade_in_ms=args.fade_in_ms,
             warmup_frames=args.warmup_frames,
-            dictionary=dictionary,
-            temperature=args.temperature,
+            normalize=args.normalize,
+            brighten=args.brighten,
+            dictionary=_resolve_dictionary(args.dictionary),
             seed=args.seed,
             max_retries=args.max_retries,
             decode_batch_size=args.decode_batch_size,
@@ -150,7 +212,6 @@ def main() -> int:
         out_path = Path(args.output)
         out_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Write float audio as WAV at model sample rate.
         sf.write(str(out_path), np.array(audio), model.config.mimi.sample_rate)
         duration = audio.shape[-1] / model.config.mimi.sample_rate
         logger.info("Wrote %s (%.2fs)", out_path, duration)

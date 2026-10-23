@@ -28,24 +28,101 @@ _DTYPE_MAP = {
     "BOOL": np.bool_,
 }
 
-_voices_names = ["alba", "marius", "javert", "jean", "fantine", "cosette", "eponine", "azelma"]
+LEGACY_VOICE_REVISION = "d4fdd22ae8c8e1cb3634e150ebeff1dab2d16df3"
+VOICE_STATE_REVISION = "a7056f505a4a8ca72d8b5fb1440071d6f1a35739"
+# Upstream `_ORIGINS_OF_PREDEFINED_VOICES` at 41cbc84. The plan counted 26;
+# that commit's dict has these 27 keys.
+PREDEFINED_VOICE_NAMES = (
+    "cosette",
+    "marius",
+    "javert",
+    "alba",
+    "jean",
+    "anna",
+    "vera",
+    "fantine",
+    "charles",
+    "paul",
+    "eponine",
+    "azelma",
+    "george",
+    "mary",
+    "jane",
+    "michael",
+    "eve",
+    "bill_boerst",
+    "peter_yearsley",
+    "stuart_bell",
+    "caro_davy",
+    "giovanni",
+    "lola",
+    "juergen",
+    "rafael",
+    "daan",
+    "estelle",
+)
+_LEGACY_VOICE_NAMES = ("alba", "marius", "javert", "jean", "fantine", "cosette", "eponine", "azelma")
 PREDEFINED_VOICES = {
-    x: f"hf://kyutai/pocket-tts-without-voice-cloning/embeddings/{x}.safetensors@d4fdd22ae8c8e1cb3634e150ebeff1dab2d16df3"
-    for x in _voices_names
+    name: (
+        "hf://kyutai/pocket-tts-without-voice-cloning/embeddings/"
+        f"{name}.safetensors@{LEGACY_VOICE_REVISION}"
+    )
+    for name in _LEGACY_VOICE_NAMES
 }
 
 
-def get_predefined_voice_state_uri(language: str, voice_name: str) -> str:
-    """Return the upstream v2 precomputed FlowLM state for a built-in voice."""
-    if voice_name not in PREDEFINED_VOICES:
-        raise ValueError(
-            f"Predefined voice '{voice_name}' not found, available voices are {list(PREDEFINED_VOICES)}."
-        )
+def language_voice_state_url(config_stem: str, name: str) -> str:
+    """Per-language streaming state published with the voice-cloning-free bundle."""
     return (
         "hf://kyutai/pocket-tts-without-voice-cloning/languages/"
-        f"{language}/embeddings/{voice_name}.safetensors"
-        "@e81d79e8194ad4c7ce879c87a4258ef20cbf2487"
+        f"{config_stem}/embeddings/{name}.safetensors@{VOICE_STATE_REVISION}"
     )
+
+
+def is_safetensors_source(source: str | Path) -> bool:
+    """True when the path or URL points at a safetensors file, ignoring queries and @rev."""
+    from urllib.parse import urlsplit
+
+    text = str(source)
+    if text.startswith(("http://", "https://")):
+        text = urlsplit(text).path
+    elif text.startswith("hf://"):
+        text = text.rsplit("@", 1)[0]
+    return text.endswith(".safetensors")
+
+
+def import_flow_state(path: str | Path, valid_modules: set[str]) -> Dict[str, Dict[str, mx.array]]:
+    """Load a voice safetensors file into FlowLM streaming state.
+
+    Published states store `offset` and `pad`. This port still addresses the
+    cache with `current_end`, so `offset` becomes a zero vector of that length
+    and a zero `pad` is dropped. A legacy `current_end` tensor is kept as stored.
+    """
+    tensors = load_safetensors_to_numpy(path)
+    if not tensors:
+        raise ValueError(f"Voice state {path} is empty")
+    state: Dict[str, Dict[str, mx.array]] = {}
+    for key, tensor in tensors.items():
+        if "/" not in key:
+            raise ValueError(
+                f"Voice state key {key!r} is not a module field. "
+                "An audio_prompt tensor is not a streaming state."
+            )
+        module_name, field = key.split("/", 1)
+        if module_name not in valid_modules:
+            raise ValueError(f"Voice state module {module_name!r} is outside the flow LM state")
+        bucket = state.setdefault(module_name, {})
+        if field == "pad":
+            pad = int(np.asarray(tensor).reshape(-1)[0])
+            if pad != 0:
+                raise ValueError(f"Voice state pad must be 0, got {pad} for {module_name}")
+            continue
+        if field == "offset":
+            offset = int(np.asarray(tensor).reshape(-1)[0])
+            bucket["current_end"] = mx.zeros((offset,), dtype=mx.int64)
+            continue
+        bucket[field] = mx.array(np.asarray(tensor))
+    return state
 
 
 def load_safetensors_to_numpy(path: Union[str, Path]) -> Dict[str, np.ndarray]:
@@ -100,25 +177,6 @@ def load_predefined_voice_mlx(voice_name: str) -> mx.array:
     if tensor is None:
         raise KeyError("audio_prompt not found in voice embedding file")
     return convert_torch_tensor_to_mlx(tensor)
-
-
-def load_model_state_mlx(path: Union[str, Path]) -> Dict[str, Dict[str, mx.array]]:
-    """Load an upstream serialized FlowLM voice state into MLX state format."""
-    tensors = load_safetensors_to_numpy(path)
-    state: Dict[str, Dict[str, mx.array]] = {}
-    for key, tensor in tensors.items():
-        if "/" not in key:
-            raise ValueError(f"Invalid serialized model-state key: {key!r}")
-        module_name, tensor_name = key.split("/", 1)
-        module_state = state.setdefault(module_name, {})
-        if tensor_name == "offset":
-            # The pre-fusion MLX attention represents its offset as the length
-            # of current_end rather than a scalar value.
-            offset = int(tensor.reshape(-1)[0])
-            module_state["current_end"] = mx.zeros((offset,), dtype=mx.int64)
-        else:
-            module_state[tensor_name] = convert_torch_tensor_to_mlx(tensor)
-    return state
 
 
 def load_safetensors_to_mlx(path: Union[str, Path], key_filter: str | None = None) -> Dict[str, mx.array]:
@@ -204,3 +262,35 @@ def convert_and_save_mlx_weights(
     numpy_dict = {k: np.array(v) for k, v in mlx_state_dict.items()}
     np.savez(mlx_path, **numpy_dict)
     logger.info("Saved MLX weights to %s", mlx_path)
+
+
+def get_predefined_voice_state_uri(language: str, voice_name: str) -> str:
+    """Return the upstream v2 precomputed FlowLM state for a built-in voice."""
+    if voice_name not in PREDEFINED_VOICES:
+        raise ValueError(
+            f"Predefined voice '{voice_name}' not found, available voices are {list(PREDEFINED_VOICES)}."
+        )
+    return (
+        "hf://kyutai/pocket-tts-without-voice-cloning/languages/"
+        f"{language}/embeddings/{voice_name}.safetensors"
+        "@e81d79e8194ad4c7ce879c87a4258ef20cbf2487"
+    )
+
+
+def load_model_state_mlx(path: Union[str, Path]) -> Dict[str, Dict[str, mx.array]]:
+    """Load an upstream serialized FlowLM voice state into MLX state format."""
+    tensors = load_safetensors_to_numpy(path)
+    state: Dict[str, Dict[str, mx.array]] = {}
+    for key, tensor in tensors.items():
+        if "/" not in key:
+            raise ValueError(f"Invalid serialized model-state key: {key!r}")
+        module_name, tensor_name = key.split("/", 1)
+        module_state = state.setdefault(module_name, {})
+        if tensor_name == "offset":
+            # The pre-fusion MLX attention represents its offset as the length
+            # of current_end rather than a scalar value.
+            offset = int(tensor.reshape(-1)[0])
+            module_state["current_end"] = mx.zeros((offset,), dtype=mx.int64)
+        else:
+            module_state[tensor_name] = convert_torch_tensor_to_mlx(tensor)
+    return state

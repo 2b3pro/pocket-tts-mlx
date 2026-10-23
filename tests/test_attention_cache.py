@@ -3,10 +3,28 @@ import unittest
 import mlx.core as mx
 import numpy as np
 
-from pocket_tts_mlx.modules.attention import complete_mimi_kv
+from pocket_tts_mlx.modules.attention import MimiStreamingMultiheadAttention, complete_mimi_kv
+from pocket_tts_mlx.modules.rope import RotaryEmbedding
+from pocket_tts_mlx.modules.stateful_module import increment_steps, init_states
 
 
 class MimiCacheTests(unittest.TestCase):
+    def test_batched_attention_matches_full_windowed_attention_after_wrap(self):
+        attention = MimiStreamingMultiheadAttention(8, 2, 5, RotaryEmbedding())
+        query = mx.random.normal((1, 17, 8), key=mx.random.key(31))
+        expected = attention(query, None)
+        state = init_states(attention, batch_size=1, sequence_length=5)
+        outputs = []
+        # The last call is bigger than the ring, as with small models and decode_batch_size=4.
+        for start, end in ((0, 3), (3, 7), (7, 17)):
+            outputs.append(attention(query[:, start:end], state))
+            increment_steps(attention, state, end - start)
+        actual = mx.concatenate(outputs, axis=1)
+        np.testing.assert_allclose(actual, expected, atol=2e-6, rtol=2e-5)
+        layer_state = next(iter(state.values()))
+        self.assertEqual(layer_state["cache"].shape, (2, 1, 2, 5, 4))
+        self.assertEqual(layer_state["end_offset"].item(), 17)
+
     def test_vectorized_update_matches_ring_buffer_positions(self):
         batch, heads, steps, dimension, capacity = 2, 2, 4, 3, 8
         cache = mx.zeros((2, batch, heads, capacity, dimension))

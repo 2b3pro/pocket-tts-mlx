@@ -20,7 +20,7 @@ CONFIG_DIR = Path(__file__).parents[1] / "pocket_tts_mlx" / "config"
 
 class V2ConfigTests(unittest.TestCase):
     def test_v2_english_is_the_default_variant(self):
-        self.assertEqual(DEFAULT_VARIANT, "english_2026-04")
+        self.assertEqual(DEFAULT_VARIANT, "english")
 
     def test_v2_english_dimensions_and_voice_bos(self):
         config = load_config(CONFIG_DIR / "english_2026-04.yaml")
@@ -36,7 +36,7 @@ class V2ConfigTests(unittest.TestCase):
 
         self.assertTrue(config.pad_with_spaces_for_short_inputs)
         self.assertFalse(config.flow_lm.insert_bos_before_voice)
-        self.assertEqual(config.default_temperature, 0.7)
+        self.assertEqual(config.default_temperature, 0.3)
 
     def test_load_model_uses_config_temperature_unless_overridden(self):
         sentinel = SimpleNamespace(origin=None)
@@ -60,7 +60,7 @@ class V2ConfigTests(unittest.TestCase):
     def test_24_layer_english_is_an_opt_in_compatible_variant(self):
         config = load_config(CONFIG_DIR / "english_2026-04_24l.yaml")
 
-        self.assertEqual(DEFAULT_VARIANT, "english_2026-04")
+        self.assertEqual(DEFAULT_VARIANT, "english")
         self.assertEqual(config.flow_lm.transformer.num_layers, 24)
         self.assertTrue(config.flow_lm.insert_bos_before_voice)
         self.assertEqual(config.default_temperature, 0.3)

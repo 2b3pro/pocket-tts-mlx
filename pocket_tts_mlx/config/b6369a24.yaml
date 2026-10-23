@@ -4,6 +4,9 @@ weights_path: hf://kyutai/pocket-tts/tts_b6369a24.safetensors@427e3d61b276ed69fd
 weights_path_without_voice_cloning: hf://kyutai/pocket-tts-without-voice-cloning/tts_b6369a24.safetensors@d4fdd22ae8c8e1cb3634e150ebeff1dab2d16df3
 pad_with_spaces_for_short_inputs: true
 
+# v0.2.1 short prompts stay padded. This file is not english_2026-01.
+pad_with_spaces_for_short_inputs: true
+
 flow_lm:
   dtype: float32
   flow:

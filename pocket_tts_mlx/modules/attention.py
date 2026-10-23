@@ -64,6 +64,16 @@ def complete_kv(cache: mx.array, current_end: mx.array, k: mx.array, v: mx.array
     return cache, valid[0], valid[1]
 
 
+def _mimi_cache_positions(end_offset: mx.array, capacity: int) -> mx.array:
+    """Absolute positions of ring slots after all writes before end_offset."""
+    batch = end_offset.shape[0]
+    slots = mx.arange(capacity, dtype=mx.int64).reshape(1, capacity)
+    last_offset = end_offset - 1
+    delta = slots - (last_offset % capacity).reshape(batch, 1)
+    positions = last_offset.reshape(batch, 1) + mx.where(delta <= 0, delta, delta - capacity)
+    return mx.where(slots >= end_offset.reshape(batch, 1), -1, positions)
+
+
 def complete_mimi_kv(cache: mx.array, end_offset: mx.array, k: mx.array, v: mx.array) -> KVCacheResult:
     """Ring-buffer KV cache for Mimi streaming attention."""
     capacity = cache.shape[3]
@@ -89,45 +99,37 @@ def complete_mimi_kv(cache: mx.array, end_offset: mx.array, k: mx.array, v: mx.a
     keys = cache_keys
     values = cache_values
 
-    full_indexes = mx.arange(capacity, dtype=mx.int64).reshape(1, capacity)
-    last_offset = end_offset + T - 1
-    end_index = last_offset % capacity
-    delta = full_indexes - end_index.reshape(B, 1)
-    positions = mx.where(
-        delta <= 0,
-        last_offset.reshape(B, 1) + delta,
-        last_offset.reshape(B, 1) + delta - capacity,
-    )
-
     new_end_offset = end_offset + T
-    invalid = full_indexes >= new_end_offset.reshape(B, 1)
-    positions = mx.where(invalid, mx.full(positions.shape, -1, dtype=positions.dtype), positions)
+    positions = _mimi_cache_positions(new_end_offset, capacity)
 
     return KVCacheResult(keys, values, positions), new_end_offset
 
 
 class StreamingMultiheadAttention(StatefulModule):
     """Streaming multi-head attention with causal masking and RoPE."""
-    def __init__(self, embed_dim: int, num_heads: int, rope: RotaryEmbedding):
+    def __init__(self, embed_dim: int, num_heads: int, rope: RotaryEmbedding,
+                 attn_dim: int | None = None, num_kv_heads: int | None = None):
         super().__init__()
         self.embed_dim = embed_dim
         self.rope = rope
         self.num_heads = num_heads
-
-        out_dim = embed_dim
-        num_kv = num_heads
-        kv_dim = (embed_dim // num_heads) * num_kv
-        out_dim += 2 * kv_dim
+        self.attn_dim = attn_dim or embed_dim
+        self.num_kv_heads = num_kv_heads or num_heads
+        if self.attn_dim % num_heads or num_heads % self.num_kv_heads:
+            raise ValueError("Attention width and KV heads must divide the query heads")
+        self.head_dim = self.attn_dim // num_heads
+        kv_dim = self.head_dim * self.num_kv_heads
+        out_dim = self.attn_dim + 2 * kv_dim
 
         self.in_proj = nn.Linear(embed_dim, out_dim, bias=False)
-        self.out_proj = nn.Linear(embed_dim, embed_dim, bias=False)
+        self.out_proj = nn.Linear(self.attn_dim, embed_dim, bias=False)
 
     def init_state(self, batch_size: int, sequence_length: int) -> Dict[str, mx.array]:
         """Initialize empty KV cache for streaming decoding."""
-        dim_per_head = self.embed_dim // self.num_heads
+        dim_per_head = self.head_dim
         initial_current_end = mx.zeros((0,), dtype=mx.int64)
         cache = mx.full(
-            (2, batch_size, sequence_length, self.num_heads, dim_per_head),
+            (2, batch_size, sequence_length, self.num_kv_heads, dim_per_head),
             mx.nan,
         )
         return {"current_end": initial_current_end, "cache": cache}
@@ -156,12 +158,12 @@ class StreamingMultiheadAttention(StatefulModule):
 
         projected = self.in_proj(query)
         b, t, _ = projected.shape
-        d = self.embed_dim // self.num_heads
-        packed = projected.reshape(b, t, 3, self.num_heads, d)
-        q, k, v = mx.split(packed, 3, axis=2)
-        q = q.squeeze(2)
-        k = k.squeeze(2)
-        v = v.squeeze(2)
+        d = self.head_dim
+        kv_dim = self.num_kv_heads * d
+        q, k, v = mx.split(projected, [self.attn_dim, self.attn_dim + kv_dim], axis=-1)
+        q = q.reshape(b, t, self.num_heads, d)
+        k = k.reshape(b, t, self.num_kv_heads, d)
+        v = v.reshape(b, t, self.num_kv_heads, d)
         q, k = self._apply_rope(q, k, state)
         k, v = self._complete_kv(k, v, state)
 
@@ -208,10 +210,27 @@ class MimiStreamingMultiheadAttention(StatefulModule):
         if model_state is None:
             return KVCacheResult.from_kv(k, v)
         layer_state = self.get_state(model_state)
-        result, new_end_offset = complete_mimi_kv(layer_state["cache"], layer_state["end_offset"], k, v)
+        cache = layer_state["cache"]
+        end_offset = layer_state["end_offset"]
+        capacity = cache.shape[3]
+        steps = k.shape[2]
+        # Early queries in a batched call still need keys that later writes evict.
+        # Attend to the old ring plus all new keys; keep only the newest slots in state.
+        positions = mx.concatenate([
+            _mimi_cache_positions(end_offset, capacity),
+            end_offset[:, None] + mx.arange(steps)[None, :],
+        ], axis=1)
+        attention_kv = KVCacheResult(
+            mx.concatenate([cache[0], k], axis=2),
+            mx.concatenate([cache[1], v], axis=2),
+            positions,
+        )
+        retained = min(steps, capacity)
+        result, new_end_offset = complete_mimi_kv(
+            cache, end_offset + steps - retained, k[:, :, -retained:], v[:, :, -retained:])
         layer_state["cache"] = mx.stack([result.keys, result.values], axis=0)
         layer_state["end_offset"] = new_end_offset
-        return result
+        return attention_kv
 
     def __call__(self, query: mx.array, model_state: dict | None) -> mx.array:
         B, T = query.shape[:2]

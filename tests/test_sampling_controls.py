@@ -33,6 +33,12 @@ class _Mimi(nn.Module):
 
 
 class _SamplingHarness:
+    # Small deterministic harnesses exercise timing/RNG independently of EOS gating.
+    _MIN_FRAMES_BEFORE_EOS = 0
+
+    def _mimi_steps_per_latent(self):
+        return 16
+
     _generate_audio_stream_short_text = TTSModel._generate_audio_stream_short_text
 
     def __init__(self):
