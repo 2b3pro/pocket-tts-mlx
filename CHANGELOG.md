@@ -11,6 +11,9 @@
   missing-EOS retries, seekable WAV headers, batched decoding, and fused kernels.
 - Added model-specific EOS thresholds, latest character rewrites, linear-time
   decimal-boundary checks, stop-event cancellation, and opt-in integration tests.
+- Corrected batched Mimi attention across ring-buffer wraps and restored prompt
+  state before retrying in-place generation, preventing batch-size-dependent
+  waveform errors and duplicated conditioning after a failed attempt.
 
 ### Added
 
