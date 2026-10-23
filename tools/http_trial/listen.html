@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pocket · Listening trial</title>
+<style>
+  :root{--paper:#f5f2e9;--ink:#202e28;--green:#244e3d;--line:#d5d7c9;--muted:#626c60}
+  *{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.6 "Avenir Next",Avenir,"Trebuchet MS",sans-serif}
+  main{max-width:1000px;margin:auto;padding:52px 34px 100px}.eyebrow{font-size:12px;letter-spacing:.19em;text-transform:uppercase;color:var(--green);font-weight:700}
+  header{border-top:3px solid var(--green);padding:28px 0 36px;max-width:860px}h1{font:normal clamp(38px,6vw,64px)/1.08 Georgia,serif;letter-spacing:-.045em;margin:18px 0 22px;max-width:720px}
+  header p{max-width:670px;color:var(--muted);margin:0}.method{display:flex;gap:20px;flex-wrap:wrap;font-size:12px;letter-spacing:.04em;margin:24px 0 0;color:var(--green)}
+  article{border-top:1px solid var(--line);padding:30px 0 34px}.pair-heading{display:flex;align-items:baseline;gap:18px}.number{font:italic 25px Georgia,serif;color:#7b8774}h2{font:normal 26px Georgia,serif;margin:0}
+  blockquote{margin:18px 0 22px;padding-left:20px;border-left:2px solid #c9b98d;color:var(--muted);max-width:820px}.players{display:grid;grid-template-columns:1fr 1fr;gap:20px}.sample{padding:18px 18px 12px;background:#eeeee4;border:1px solid var(--line);border-radius:4px}.sample label{display:block;letter-spacing:.13em;font-size:12px;text-transform:uppercase;font-weight:700;margin-bottom:10px}audio{width:100%;height:42px}
+  fieldset{border:0;padding:0;margin:22px 0 0}legend{font-size:13px;color:var(--muted);margin-bottom:9px}.choices{display:flex;gap:10px;flex-wrap:wrap}.choice{position:relative;cursor:pointer}.choice input{position:absolute;opacity:0}.choice span{display:block;padding:9px 24px;border:1px solid #b8c2b4;border-radius:30px;min-width:110px;text-align:center}.choice input:checked+span{background:var(--green);color:white;border-color:var(--green)}.choice input:focus-visible+span{outline:3px solid #a87b28;outline-offset:3px}
+  .finish{border-top:2px solid var(--green);padding-top:28px}textarea{display:block;width:100%;padding:14px;margin:9px 0 20px;background:transparent;border:1px solid #adb9a8;font:inherit;color:inherit;border-radius:3px;resize:vertical}.save-row{display:flex;align-items:center;gap:20px;flex-wrap:wrap}button{border:0;padding:13px 25px;border-radius:3px;background:var(--green);color:#fff;font:600 15px "Avenir Next",sans-serif;cursor:pointer}button:disabled{opacity:.45;cursor:default}.status{font-size:14px;color:var(--muted)}.fine{font-size:12px;color:var(--muted);margin-top:20px}#error{color:#853c2c}
+  @media(max-width:650px){main{padding:24px 20px 70px}.players{grid-template-columns:1fr;gap:10px}header{padding-top:20px}.method{gap:8px 16px}.choice span{padding:8px 19px}}
+</style>
+<main>
+  <header>
+    <div class="eyebrow">Pocket / Listening room / 01</div>
+    <h1>Which voice feels<br>more like Nova?</h1>
+    <p>Listen to A and B for each passage. Choose the voice you prefer, or call it a tie.
+      Focus on naturalness, clarity, familiar character, and how each sentence ends.</p>
+    <div class="method"><span>Same voice recording</span><span>Same checkpoint</span><span>Matched loudness</span><span>Randomized A / B</span></div>
+  </header>
+  <div id="error" role="alert"></div>
+  <div id="pairs"><p class="status">Loading listening pairs…</p></div>
+  <section class="finish">
+    <label for="notes">Anything you noticed? <span class="status">Optional</span></label>
+    <textarea id="notes" rows="3" maxlength="2000" placeholder="A word, a pause, a change in tone…"></textarea>
+    <div class="save-row"><button id="save" disabled>Save my choices</button><span id="status" class="status" role="status" aria-live="polite">Choose a preference for each passage.</span></div>
+    <p class="fine">Nothing plays automatically. Choices stay on this Mac. The playback page does not reveal which engine made each sample.</p>
+  </section>
+</main>
+<script>
+  let pairs=[],storageKey='',votes={};
+  const container=document.getElementById('pairs'),status=document.getElementById('status'),save=document.getElementById('save'),notes=document.getElementById('notes');
+  function update(){const n=Object.keys(votes).length;save.disabled=n!==pairs.length;status.textContent=`${n} of ${pairs.length} passages chosen`;localStorage.setItem(storageKey,JSON.stringify({votes,notes:notes.value}));}
+  function element(tag,text,cls){const e=document.createElement(tag);if(text)e.textContent=text;if(cls)e.className=cls;return e;}
+  fetch('/trial/pairs.json').then(r=>{if(!r.ok)throw Error('The listening clips are not ready yet. Reload in a moment.');return r.json();}).then(data=>{
+    pairs=data;storageKey='pocket-listening-'+pairs[0].trial;
+    try{const saved=JSON.parse(localStorage.getItem(storageKey)||'{}');votes=saved.votes||{};notes.value=saved.notes||'';}catch{}
+    container.textContent='';
+    pairs.forEach((pair,i)=>{
+      const card=element('article'),head=element('div',null,'pair-heading');head.append(element('span',String(i+1).padStart(2,'0'),'number'),element('h2',pair.title));card.append(head,element('blockquote',pair.text));
+      const players=element('div',null,'players');
+      ['A','B'].forEach(label=>{const panel=element('div',null,'sample'),name=element('label','Sample '+label),audio=element('audio');audio.controls=true;audio.preload='metadata';audio.src='/trial/audio/'+pair[label];audio.setAttribute('aria-label',`${pair.title}, sample ${label}`);audio.addEventListener('play',()=>document.querySelectorAll('audio').forEach(other=>{if(other!==audio)other.pause();}));panel.append(name,audio);players.append(panel);});card.append(players);
+      const field=element('fieldset');field.append(element('legend','Which did you prefer?'));const choices=element('div',null,'choices');
+      [['A','A'],['B','B'],['tie','A tie']].forEach(([value,text])=>{const label=element('label',null,'choice'),input=element('input');input.type='radio';input.name=pair.id;input.value=value;input.checked=votes[pair.id]===value;input.addEventListener('change',()=>{votes[pair.id]=value;update();});label.append(input,element('span',text));choices.append(label);});field.append(choices);card.append(field);container.append(card);
+    });update();
+  }).catch(e=>{container.textContent='';document.getElementById('error').textContent=e.message;});
+  notes.addEventListener('input',update);
+  save.addEventListener('click',async()=>{save.disabled=true;status.textContent='Saving…';try{const r=await fetch('/trial/votes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({votes,notes:notes.value})});if(!r.ok)throw Error('Could not save. Please try again.');status.textContent='Saved locally. Return to chat when you’re ready to review the results.';}catch(e){status.textContent=e.message;save.disabled=false;}});
+</script>
+</html>

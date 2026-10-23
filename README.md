@@ -239,6 +239,10 @@ Streaming stays on the calling thread. Set a `threading.Event` passed as
 `generate_audio_stream(..., stop=event)` to cancel, or close the generator.
 Use separate model instances for concurrent generation.
 
+For a matched local HTTP benchmark and blind listening comparison, see
+[`koder/docs/http-trial.md`](koder/docs/http-trial.md). The optional harness
+and its dependencies are separate from the installed package.
+
 Use `--normalize` to bring quiet speech to about -18 dBFS with peaks below
 -1 dBFS, and `--brighten` for a +10 dB high shelf at 1.5 kHz. Both are off by
 default. Python equivalents are `generate_audio(normalize=True, brighten=True)`.

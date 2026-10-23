@@ -2,6 +2,9 @@
 
 ## Unreleased (`0.3.1.dev0`)
 
+- Added an opt-in loopback HTTP comparison harness and blind listening page,
+  with matching PCM/pause/loudness behavior, same-thread MLX generation,
+  contract checks, and private generated trial artifacts outside the package.
 - Merged MLX upstream v0.3.0 and aligned runtime model/configuration behavior
   with Kyutai `44cb63e` (2026-10-22): October English default, six small English
   models, multilingual configs, JSON tokenizers, grouped attention, low-rank

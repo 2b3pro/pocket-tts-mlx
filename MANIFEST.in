@@ -2,4 +2,5 @@ prune tests
 prune koder
 prune build
 prune dist
+prune tools
 global-exclude *.pyc
