@@ -1,5 +1,5 @@
 ---
-updated_at: "23 Oct 2026 | 09:36 AM IST"
+updated_at: "23 Oct 2026 | 07:17 PM IST"
 ---
 
 # Koder State
@@ -16,7 +16,9 @@ updated_at: "23 Oct 2026 | 09:36 AM IST"
 ## Present
 
 - Package version: `0.3.1.dev0`, unreleased. `main` contains the integrated code
-  and is pushed to `2b3pro/pocket-tts-mlx`.
+  at `67f769a` and is pushed to `2b3pro/pocket-tts-mlx`.
+- Active local branch: `trial/resident-http`. `8f05873` adds an optional
+  loopback HTTP comparison harness and blind listening page outside the package.
 - Default: October English at temperature 0.3. There are 28 shipped configs
   (all 27 current Kyutai configs plus the original `b6369a24`) and 27 voices.
 - Seven languages, 24-layer previews, drifting, and six small English models
@@ -34,10 +36,26 @@ updated_at: "23 Oct 2026 | 09:36 AM IST"
 - The production VoiceServer environment and PyPI were not changed.
 - Scope, compatibility changes, evidence, and commands:
   `koder/docs/upstream-alignment.md`; user guidance: `README.md`.
+- A matched April-model HTTP trial favors MLX on the M2 Pro: streaming first
+  body 25–37 ms vs 81–83 ms; buffered wall time about 41% lower. Process RSS
+  is higher (908 vs 612 MiB); GPU contention and sustained load are untested.
+- Four blinded, loudness-matched voice pairs are ready at
+  `http://127.0.0.1:8893/trial`. The page is open in Brave. Owner votes are
+  pending and the answer key remains unread. Production stays on PyTorch.
+- The isolated candidate process remains running for listening. Private
+  runtime/artifact locator: `/tmp/pocket-mlx-http-trial-location.json`.
+  Verify the recorded PID/command before stopping it after evaluation.
+- Trial validation: 142 tests passed, 15 opt-in tests skipped; real HTTP
+  contract/disconnect checks passed; sdist/wheel and archive audits passed.
+- Trial results/limits: `koder/analysis/002_http_trial/INDEX.md`;
+  repeatable commands: `koder/docs/http-trial.md`. No trial branch push yet.
 
 ## Future
 
 - No known source-alignment work remains for these pinned snapshots.
+- After the owner saves listening preferences, compare votes with the private
+  answer key. A production change needs an explicit deployment decision and
+  realistic concurrency/GPU contention checks.
 - Review future upstream changes deliberately. Model releases do not propagate
   automatically to this independent port.
 - Publishing a package or upgrading a deployed VoiceServer is a separate task.
