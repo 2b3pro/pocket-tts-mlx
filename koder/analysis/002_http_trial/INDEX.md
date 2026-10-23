@@ -1,5 +1,5 @@
 ---
-status: in_progress
+status: complete
 type: analysis
 tags: mlx, pocket-tts, inference, benchmark
 created: 2026-10-23
@@ -8,8 +8,10 @@ updated: 2026-10-23
 
 # Analysis 002: Resident HTTP trial
 
-The warm local HTTP performance gate passed. The owner's blind listening
-evaluation is pending; sound quality and production readiness are not decided.
+The warm local HTTP performance gate passed. The owner's four blind choices
+split 2–2 between engines. The owner then requested promotion, and Nova's
+production resident path was upgraded to MLX on 2026-10-23. This trial does not
+establish general sound-quality superiority.
 
 ## Method and scope
 
@@ -53,7 +55,8 @@ workload were not benchmarked.
   active counter returned to zero and the cancellation counter advanced.
 - Four pairs were generated without preference selection, with balanced
   randomized A/B assignment. All eight WAVs are 24 kHz mono, with measured
-  RMS 0.1 and peaks below 0.70. The answer key has not been read.
+  RMS 0.1 and peaks below 0.70. The answer key remained unread until the owner
+  saved all four choices.
 - The listening page rendered all four pairs and eight players in Brave;
   playback requires a click and saving is disabled until all pairs are chosen.
 - `python -m pytest -q`: 142 passed, 15 opt-in model tests skipped,
@@ -62,18 +65,52 @@ workload were not benchmarked.
 - The isolated sdist/wheel build passed. Archive audits confirmed no trial
   tools, tests, operator files, voice states, WAVs, or bytecode are shipped.
 
-## Local continuation
+## Production promotion
 
-The trial is available at `http://127.0.0.1:8893/trial`. Runtime files live
-outside Git under the local application-support trial directory; the locator
-is `/tmp/pocket-mlx-http-trial-location.json`. It records the root, PID, and
-command. Private WAVs, votes, state hashes, answer keys, and raw benchmark data
-must stay outside Git.
+- Private PAI commit `d932092e` adds `Infrastructure/VoiceServer/pocket-server/mlx_server.py`,
+  its tests, installer, launchd template, and deployment/rollback documentation.
+  Only selected VoiceServer paths were committed; unrelated PAI edits remain.
+- Installed package: `0.3.1.dev0`, source `67f769a`, from the audited wheel.
+  A dedicated internal-SSD venv has 37 compatible packages and no Torch;
+  package imports and offline April weights do not depend on external volumes.
+- `com.pai.pocket-mlx-server` serves loopback port 8894, with Nova pinned and
+  a bounded cache of 16 other states. Both decoder paths warm before readiness.
+  The installed gateway LaunchAgent sets `POCKET_RESIDENT_URL` to port 8894.
+- The April model, voice states, temperature 0.7, and resident voice allowlist
+  are retained. Other voices continue on Core ML. PyTorch stays warm on 8892
+  for manual rollback; Core ML remains the automatic standby.
+- Five Python service tests and six Bun routing/fallback tests passed.
+  Live checks covered PCM headers, pause markers, -20 dBFS leveling, a second
+  voice, three simultaneous requests, a real client disconnect, and an
+  eight-second synthetic GPU matrix workload. No failed/active requests remained.
+- Under synthetic GPU pressure, the streaming probe returned first body in
+  74 ms and produced 5.04 seconds of audio in 2.993 seconds. A separate idle
+  first-use probe took 392 ms to first body; the earlier warm medians are not
+  a latency bound. Sustained operation with an LLM remains unmeasured.
+- An initial immediate gateway bootstrap was rejected by launchd. The saved
+  original plist restored PyTorch; waiting for job removal before bootstrap
+  completed the cutover successfully. The installer/rollback instructions
+  include this wait.
+- A fresh default-engine production `/notify` request, with cache bypass and
+  playback skipped, produced 140,160 valid mono 24 kHz PCM samples in a WAV.
+  The MLX completed counter advanced from 10 to 11; both the gateway and
+  candidate were healthy, with zero MLX failures. PyTorch remained ready.
 
-Wait for the owner to save preferences, then read `votes.json` and the private
-answer key to report the comparison. A small listening trial cannot establish
-general quality superiority. If the owner chooses to continue, test the
-deployment's real concurrency and GPU contention before proposing promotion.
-The listening trial does not itself authorize production routing changes.
-Stop the recorded process when the evaluation is finished; re-check PID and
-command first so an unrelated process is never stopped after PID reuse.
+## Local continuation and rollback
+
+The temporary trial on port 8893 was stopped after verifying its PID/command;
+its private clips and votes are retained outside Git. The old locator at
+`/tmp/pocket-mlx-http-trial-location.json` is marked stopped.
+
+The persistent service's private receipt is
+`~/Library/Application Support/pai/pocket-mlx-server/deployment.json`.
+It points to the original gateway plist, wheel and hash, dependency snapshot,
+and verification records. These files, WAVs, votes, state hashes, and answer
+keys must stay outside Git.
+
+For rollback, probe the retained PyTorch on port 8892, change the installed
+gateway's `POCKET_RESIDENT_URL` back to `http://127.0.0.1:8892`, then unload
+and reload the gateway with the documented wait. Exact commands are in PAI's
+`Infrastructure/VoiceServer/pocket-server/README.md`. Preserve this environment
+override when reinstalling the gateway; its source default intentionally stays
+on port 8892. The MLX service can remain available while rollback is verified.

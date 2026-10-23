@@ -1,5 +1,5 @@
 ---
-updated_at: "23 Oct 2026 | 07:17 PM IST"
+updated_at: "23 Oct 2026 | 07:45 PM IST"
 ---
 
 # Koder State
@@ -33,18 +33,28 @@ updated_at: "23 Oct 2026 | 07:17 PM IST"
   model CLI with batched decoding and no Torch import (validated dependencies).
 - Hosted macOS 15 ARM CI passed for `ae36b64`: GitHub Actions run
   `39898393321` (Tests / pytest).
-- The production VoiceServer environment and PyPI were not changed.
+- PyPI was not changed. The production upgrade is recorded below.
 - Scope, compatibility changes, evidence, and commands:
   `koder/docs/upstream-alignment.md`; user guidance: `README.md`.
 - A matched April-model HTTP trial favors MLX on the M2 Pro: streaming first
   body 25–37 ms vs 81–83 ms; buffered wall time about 41% lower. Process RSS
   is higher (908 vs 612 MiB); GPU contention and sustained load are untested.
-- Four blinded, loudness-matched voice pairs are ready at
-  `http://127.0.0.1:8893/trial`. The page is open in Brave. Owner votes are
-  pending and the answer key remains unread. Production stays on PyTorch.
-- The isolated candidate process remains running for listening. Private
-  runtime/artifact locator: `/tmp/pocket-mlx-http-trial-location.json`.
-  Verify the recorded PID/command before stopping it after evaluation.
+- The owner's four blind choices split 2–2; the owner then requested the
+  upgrade. Nova now uses the persistent MLX resident on `127.0.0.1:8894`.
+- Private PAI commit `d932092e` adds the resident adapter, tests, installer,
+  and launchd template. An installed wheel and isolated venv live on the
+  internal SSD; no Torch or external source imports are used by that job.
+- Gateway launchd sets `POCKET_RESIDENT_URL=http://127.0.0.1:8894`. April
+  model, temperature 0.7, voice state, and Nova allowlist are preserved.
+  PyTorch remains warm on 8892 for rollback; Core ML remains automatic standby.
+- Five new Python service tests and six Bun routing/fallback tests passed.
+  Real concurrency, disconnect, PCM/pause/RMS, and synthetic GPU checks passed;
+  a fresh production `/notify` request advanced MLX's counter and saved valid
+  audio. Sustained LLM coexistence is unmeasured; idle/GPU load can add latency.
+- The port 8893 trial process was stopped; private clips and votes remain.
+  Persistent service receipt/rollback preimage: local application support
+  `pai/pocket-mlx-server/deployment.json`. Exact rollback: PAI's
+  `Infrastructure/VoiceServer/pocket-server/README.md`.
 - Trial validation: 142 tests passed, 15 opt-in tests skipped; real HTTP
   contract/disconnect checks passed; sdist/wheel and archive audits passed.
 - Trial results/limits: `koder/analysis/002_http_trial/INDEX.md`;
@@ -53,9 +63,9 @@ updated_at: "23 Oct 2026 | 07:17 PM IST"
 ## Future
 
 - No known source-alignment work remains for these pinned snapshots.
-- After the owner saves listening preferences, compare votes with the private
-  answer key. A production change needs an explicit deployment decision and
-  realistic concurrency/GPU contention checks.
+- Observe the deployed Nova path under normal use. Roll back by restoring
+  the gateway URL to port 8892 and reloading it with the documented wait.
 - Review future upstream changes deliberately. Model releases do not propagate
   automatically to this independent port.
-- Publishing a package or upgrading a deployed VoiceServer is a separate task.
+- Publishing a package remains a separate task; local trial/deployment commits
+  have not been pushed. Unrelated PAI worktree changes were preserved.
